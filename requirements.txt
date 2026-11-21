@@ -1,0 +1,40 @@
+# Python dependencies for pre-MZT cis-regulatory grammar repository
+# Compatible with Python 3.12 + CUDA PyTorch
+
+# Core PyTorch and Hugging Face ecosystem
+torch
+transformers>=4.45.0,<5.0.0
+peft
+accelerate
+huggingface_hub
+
+# Deep learning interpretability & genomics sequence models
+chrombpnet-refactor @ git+https://github.com/kundajelab/chrombpnet-refactor.git
+captum
+shap
+logomaker
+
+# Differential expression & peak calling
+pydeseq2
+macs3
+
+# Genomic file parsing & manipulation
+pyBigWig
+pyfaidx
+pysam
+biopython
+
+# Scientific computing & machine learning
+numpy
+scipy
+pandas
+scikit-learn
+matplotlib
+seaborn
+
+# Utilities & interactive environment
+requests
+tqdm
+jupyterlab
+ipykernel
+ipywidgets
