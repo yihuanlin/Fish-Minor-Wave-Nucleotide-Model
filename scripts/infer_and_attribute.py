@@ -41,6 +41,8 @@ if bin_dir not in os.environ.get("PATH", ""):
 
 import numpy as np
 import pandas as pd
+import random
+from collections import defaultdict
 from scipy import stats
 from sklearn.linear_model import RidgeCV
 from sklearn.preprocessing import StandardScaler
@@ -82,14 +84,43 @@ def one_hot_encode_sequence(seq: str) -> np.ndarray:
 # 1. Block 3: Stage 2 Linear Probe Fitting & Model Grafting
 # ==============================================================================
 
+def sanitize_for_torch_save(obj: Any) -> Any:
+    """Recursively convert numpy/pandas/custom objects to pure Python primitives for PyTorch 2.6+ weights_only=True."""
+    if obj is None:
+        return None
+    if isinstance(obj, (int, float, str, bool, bytes)):
+        return obj
+    if isinstance(obj, torch.Tensor):
+        return obj.detach().cpu()
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        return float(obj)
+    if isinstance(obj, np.bool_):
+        return bool(obj)
+    if isinstance(obj, np.ndarray):
+        return [sanitize_for_torch_save(x) for x in obj.tolist()]
+    if isinstance(obj, dict):
+        return {str(k): sanitize_for_torch_save(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [sanitize_for_torch_save(x) for x in obj]
+    if isinstance(obj, (set, frozenset)):
+        return [sanitize_for_torch_save(x) for x in sorted(list(obj))]
+    if hasattr(obj, "__dict__"):
+        return sanitize_for_torch_save(vars(obj))
+    return str(obj)
+
+
 def load_chrombpnet_encoder(checkpoint_path: str | Path, device: str = "cpu") -> nn.Module:
     """Load trained ChromBPNet or BPNet PyTorch checkpoint strictly."""
     p = Path(checkpoint_path).resolve()
     assert p.exists() and p.stat().st_size > 1024, f"[FATAL] ChromBPNet checkpoint missing or empty: {p}"
     model = chrombpnet.load_model(p, map_location=device)
     model.eval()
+    model.base_checkpoint_path = str(p)
 
     enc = model.tf_model if hasattr(model, "tf_model") else model
+    enc.base_checkpoint_path = str(p)
     assert hasattr(enc, "_features"), f"[FATAL] Loaded model {type(model)} missing '_features' method"
 
     dummy_x = torch.zeros(1, 4, 2114, device=device)
@@ -120,6 +151,7 @@ class GraftedChromBPNet(nn.Module):
     ):
         super().__init__()
         self.encoder = encoder
+        self.base_checkpoint_path = getattr(encoder, "base_checkpoint_path", None)
         for p in self.encoder.parameters():
             p.requires_grad = False
 
@@ -170,17 +202,25 @@ class GraftedChromBPNet(nn.Module):
                 h = h.mean(dim=-1)
             return h
 
-    def forward(self, x: torch.Tensor, rc_average: bool = True, return_late: bool = False, **kwargs) -> Union[Dict[str, torch.Tensor], Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+    def forward(
+        self,
+        x: torch.Tensor,
+        rc_average: bool = True,
+        return_late: bool = False,
+        compute_late: bool = False,
+        **kwargs
+    ) -> Union[Dict[str, torch.Tensor], Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
         emb = self.extract_features(x, rc_average=rc_average)
         out_abs = self.head_abs(emb).reshape(-1)
         out_rel = self.head_rel(emb).reshape(-1)
 
-        # Expose base late predicted logcounts from the underlying trained encoder
+        out_late = None
         enc = self.encoder.tf_model if hasattr(self.encoder, "tf_model") else self.encoder
+
+        # Base late accessibility predicted logcounts from underlying trained encoder
         if hasattr(enc, "count_dense") and enc.count_dense is not None:
             out_late = enc.count_dense(emb).reshape(-1)
-        else:
-            # Call encoder directly to get its count output (tuple index 1) - never fall back to out_abs
+        elif return_late or compute_late:
             x_in = x
             if x_in.ndim == 3 and x_in.shape[1] != 4 and x_in.shape[2] == 4:
                 x_in = x_in.permute(0, 2, 1)
@@ -193,24 +233,32 @@ class GraftedChromBPNet(nn.Module):
                     if isinstance(enc_out_rc, tuple) and len(enc_out_rc) > 1 and enc_out_rc[1] is not None:
                         out_late = 0.5 * (out_late + enc_out_rc[1].reshape(-1))
             else:
-                raise RuntimeError("Underlying ChromBPNet encoder does not expose count_dense or counts log-prediction output!")
+                raise RuntimeError(
+                    "[FATAL] Unable to compute late accessibility counts: neither count_dense head "
+                    "nor encoder counts output found."
+                )
 
         if return_late:
+            if out_late is None:
+                raise RuntimeError("[FATAL] return_late=True requested but late accessibility could not be computed.")
             return out_abs, out_rel, out_late
 
-        return {
+        res = {
             "y_abs": out_abs,
             "y_rel": out_rel,
-            "pred_late": out_late,
-            "late_logcounts": out_late,
             "embedding": emb
         }
+        if out_late is not None:
+            res["pred_late"] = out_late
+            res["late_logcounts"] = out_late
+        return res
 
 
 def save_grafted_checkpoint(
     grafted_model: GraftedChromBPNet,
     out_path: str | Path,
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None,
+    base_checkpoint_path: Optional[str | Path] = None
 ) -> str:
     """Save grafted model cleanly (state_dict + weights/scaler/config metadata) for PyTorch 2.6+ weights_only=True."""
     p = Path(out_path).resolve()
@@ -230,6 +278,14 @@ def save_grafted_checkpoint(
         except Exception:
             enc_cfg = None
 
+    clean_cfg = sanitize_for_torch_save(enc_cfg)
+    clean_meta = sanitize_for_torch_save(metadata or {})
+
+    # Detect base_checkpoint_path from argument, attribute, or metadata
+    base_ckpt = base_checkpoint_path or getattr(grafted_model, "base_checkpoint_path", None) or getattr(grafted_model.encoder, "base_checkpoint_path", None)
+    if not base_ckpt and metadata and "base_checkpoint_path" in metadata:
+        base_ckpt = metadata["base_checkpoint_path"]
+
     payload = {
         "head_abs_weight": grafted_model.head_abs.weight.detach().cpu(),
         "head_abs_bias": grafted_model.head_abs.bias.detach().cpu(),
@@ -242,8 +298,9 @@ def save_grafted_checkpoint(
         "scaler_mean": torch.tensor(grafted_model.scaler_mean),
         "scaler_scale": torch.tensor(grafted_model.scaler_scale),
         "encoder_state_dict": {k: v.detach().cpu() for k, v in grafted_model.encoder.state_dict().items()},
-        "encoder_config": enc_cfg,
-        "metadata": metadata or {}
+        "encoder_config": clean_cfg,
+        "base_checkpoint_path": str(base_ckpt) if base_ckpt else "",
+        "metadata": clean_meta
     }
     torch.save(payload, str(p))
     print(f"[+] Saved grafted model checkpoint to {p}")
@@ -253,36 +310,54 @@ def save_grafted_checkpoint(
 def load_grafted_model(
     checkpoint_path: str | Path,
     base_encoder: Optional[nn.Module] = None,
-    device: str = "cpu"
+    device: str = "cpu",
+    work_dir: Optional[str | Path] = None
 ) -> GraftedChromBPNet:
     """Load grafted model reliably under PyTorch 2.6+ weights_only=True."""
     p = Path(checkpoint_path).resolve()
     payload = torch.load(str(p), map_location=device, weights_only=True)
 
     if base_encoder is None:
-        enc_cfg = payload.get("encoder_config")
-        cleaned_cfg = {}
-        if enc_cfg and isinstance(enc_cfg, dict):
-            for k, v in enc_cfg.items():
-                if k == "inputlen":
-                    cleaned_cfg["input_length"] = v
-                elif k == "outputlen":
-                    cleaned_cfg["output_length"] = v
-                elif k in ("input_length", "output_length", "filters", "n_dilation_layers", "counts_loss_weight", "counts_head"):
-                    cleaned_cfg[k] = v
-        try:
-            cfg = chrombpnet.ModelConfig(**cleaned_cfg)
-        except Exception:
-            cfg = chrombpnet.ModelConfig()
+        # First attempt: reload the base encoder via chrombpnet.load_model(base_checkpoint_path)
+        base_ckpt_str = payload.get("base_checkpoint_path", "")
+        if base_ckpt_str:
+            cands = [Path(base_ckpt_str)]
+            if work_dir:
+                cands.append(Path(work_dir) / base_ckpt_str)
+            cands.append(p.parent / base_ckpt_str)
+            for cand in cands:
+                if cand.exists() and cand.is_file():
+                    try:
+                        base_encoder = chrombpnet.load_model(str(cand), map_location=device)
+                        break
+                    except Exception:
+                        base_encoder = None
 
-        encoder_keys = list(payload.get("encoder_state_dict", {}).keys())
-        is_cbp = any(k.startswith("tf_model.") for k in encoder_keys)
-        if is_cbp:
-            dummy_bias = chrombpnet.BPNet(cfg)
-            dummy_tf = chrombpnet.BPNet(cfg)
-            base_encoder = chrombpnet.ChromBPNet(cfg, bias_model=dummy_bias, tf_model=dummy_tf)
-        else:
-            base_encoder = chrombpnet.BPNet(cfg)
+        # Fallback to ModelConfig if base checkpoint was moved or unavailable
+        if base_encoder is None:
+            enc_cfg = payload.get("encoder_config")
+            cleaned_cfg = {}
+            if enc_cfg and isinstance(enc_cfg, dict):
+                for k, v in enc_cfg.items():
+                    if k == "inputlen":
+                        cleaned_cfg["input_length"] = v
+                    elif k == "outputlen":
+                        cleaned_cfg["output_length"] = v
+                    elif k in ("input_length", "output_length", "filters", "n_dilation_layers", "counts_loss_weight", "counts_head"):
+                        cleaned_cfg[k] = v
+            try:
+                cfg = chrombpnet.ModelConfig(**cleaned_cfg)
+            except Exception:
+                cfg = chrombpnet.ModelConfig()
+
+            encoder_keys = list(payload.get("encoder_state_dict", {}).keys())
+            is_cbp = any(k.startswith("tf_model.") for k in encoder_keys)
+            if is_cbp:
+                dummy_bias = chrombpnet.BPNet(cfg)
+                dummy_tf = chrombpnet.BPNet(cfg)
+                base_encoder = chrombpnet.ChromBPNet(cfg, bias_model=dummy_bias, tf_model=dummy_tf)
+            else:
+                base_encoder = chrombpnet.BPNet(cfg)
 
     base_encoder.load_state_dict(payload["encoder_state_dict"])
     base_encoder.to(device)
@@ -297,6 +372,8 @@ def load_grafted_model(
         scaler_mean=payload["scaler_mean"].numpy(),
         scaler_scale=payload["scaler_scale"].numpy()
     )
+    if payload.get("base_checkpoint_path"):
+        grafted.base_checkpoint_path = payload["base_checkpoint_path"]
     grafted.to(device)
     grafted.eval()
     return grafted
@@ -377,7 +454,7 @@ def fit_linear_probes(
     is_repeat = df_targets.get("is_repeat_downweight", pd.Series(False, index=df_targets.index)).values
     is_hk = df_targets.get("is_housekeeping", pd.Series(False, index=df_targets.index)).values
 
-    train_mask = (~is_test) & (~is_repeat)
+    train_mask = df_targets[test_split_col].isin(["train", "valid"]).values & (~is_repeat)
     if exclude_housekeeping:
         train_mask = train_mask & (~is_hk)
 
@@ -429,7 +506,9 @@ def fit_linear_probes(
 
         # 3. Early-vs-late peak classification AUROC (cpm_early >= 2.0 vs cpm_early < 0.5)
         early_late_auroc = np.nan
+        early_late_auroc_quantile = np.nan
         early_col = "cpm_early" if "cpm_early" in df_targets.columns else ("early_cpm" if "early_cpm" in df_targets.columns else None)
+        count_early_col = "count_early" if "count_early" in df_targets.columns else None
         if early_col:
             filt_df = df_targets.loc[test_mask_filtered]
             early_active = filt_df[early_col] >= 2.0
@@ -440,6 +519,22 @@ def fit_linear_probes(
                 preds_sub = y_pred_filt[subset_mask.values]
                 early_late_auroc = float(roc_auc_score(y_bin, preds_sub))
 
+            # Quantile-based early-vs-late AUROC (top 10% cpm_early vs count_early == 0 / bottom 10%)
+            cpm_vals = filt_df[early_col].values
+            if len(cpm_vals) >= 10:
+                q90 = np.quantile(cpm_vals, 0.90)
+                q_top = cpm_vals >= q90
+                if count_early_col and count_early_col in filt_df.columns:
+                    q_bottom = (filt_df[count_early_col].values == 0)
+                else:
+                    q10 = np.quantile(cpm_vals, 0.10)
+                    q_bottom = cpm_vals <= q10
+                q_mask = q_top | q_bottom
+                if q_top.sum() >= 3 and q_bottom.sum() >= 3:
+                    y_q_bin = q_top[q_mask].astype(int)
+                    preds_q = y_pred_filt[q_mask]
+                    early_late_auroc_quantile = float(roc_auc_score(y_q_bin, preds_q))
+
         results[target] = {
             "model": ridge,
             "coef": ridge.coef_,
@@ -449,6 +544,7 @@ def fit_linear_probes(
             "test_spearman_p": float(spearman_filt_p),
             "test_auroc": float(auroc_filt),
             "early_late_auroc": early_late_auroc,
+            "early_late_auroc_quantile": early_late_auroc_quantile,
             "all_peaks_spearman_r": float(spearman_all_r),
             "all_peaks_spearman_p": float(spearman_all_p),
             "all_peaks_auroc": float(auroc_all)
@@ -457,6 +553,8 @@ def fit_linear_probes(
         print(f"    Repeat-filtered (excl. miR-430): Spearman r = {spearman_filt_r:.3f} (p={spearman_filt_p:.2e}), AUROC (>median) = {auroc_filt:.3f}")
         if not np.isnan(early_late_auroc):
             print(f"    Early-vs-Late Peak AUROC (>=2.0 vs <0.5 cpm): {early_late_auroc:.3f}")
+        if not np.isnan(early_late_auroc_quantile):
+            print(f"    Early-vs-Late Peak AUROC (Quantile top 10% vs 0 count): {early_late_auroc_quantile:.3f}")
         print(f"    All test peaks (unfiltered):     Spearman r = {spearman_all_r:.3f} (p={spearman_all_p:.2e}), AUROC = {auroc_all:.3f}")
 
     return results
@@ -648,7 +746,7 @@ def score_tss_regions(
             b_chunk = windows[b_start:b_start + batch_size]
             b_tensor = torch.tensor(np.array(b_chunk), dtype=torch.float32, device=device)
             with torch.no_grad():
-                out = grafted_model(b_tensor)
+                out = grafted_model(b_tensor, compute_late=True)
                 chunk_abs = float(torch.max(out["y_abs"]).cpu().item())
                 chunk_rel = float(torch.max(out["y_rel"]).cpu().item())
                 chunk_late = float(torch.max(out.get("pred_late", out.get("late_logcounts", out["y_abs"]))).cpu().item())
@@ -831,11 +929,12 @@ def scan_locus_sliding_window(
         b_chunk = tensors[b_start:b_start + batch_size]
         b_x = torch.tensor(np.array(b_chunk), dtype=torch.float32, device=device)
         with torch.no_grad():
-            out = grafted_model(b_x)
+            out = grafted_model(b_x, compute_late=return_late)
             abs_list.append(out["y_abs"].cpu().numpy())
             rel_list.append(out["y_rel"].cpu().numpy())
-            out_late = out.get("pred_late", out["y_abs"]).cpu().numpy()
-            late_list.append(out_late)
+            if return_late:
+                out_late = out.get("pred_late", out.get("late_logcounts", out["y_abs"])).cpu().numpy()
+                late_list.append(out_late)
 
     pred_abs = np.concatenate(abs_list, axis=0) if abs_list else np.array([])
     pred_rel = np.concatenate(rel_list, axis=0) if rel_list else np.array([])
@@ -854,9 +953,10 @@ def compute_input_gradient_attribution(
     grafted_model: GraftedChromBPNet,
     one_hot_seq: np.ndarray,
     target: str = "y_abs",
-    device: str = "cpu"
+    device: str = "cpu",
+    rc_average: bool = True
 ) -> np.ndarray:
-    """Compute real input x gradient attribution across window."""
+    """Compute real input x gradient attribution across window with optional RC averaging."""
     grafted_model.to(device)
     grafted_model.eval()
 
@@ -868,8 +968,149 @@ def compute_input_gradient_attribution(
     score.backward()
 
     grad = x.grad.squeeze(0).cpu().numpy()
-    attr = one_hot_seq * grad  # shape (4, L)
-    return attr
+    attr_fwd = one_hot_seq * grad  # shape (4, L)
+
+    if not rc_average:
+        return attr_fwd
+
+    grafted_model.zero_grad()
+    seq_rc = np.flip(one_hot_seq, axis=-1)[[3, 2, 1, 0], :]
+    x_rc = torch.tensor(seq_rc, dtype=torch.float32, device=device).unsqueeze(0)
+    x_rc.requires_grad = True
+
+    out_rc = grafted_model(x_rc, rc_average=False)
+    score_rc = out_rc[target].sum()
+    score_rc.backward()
+
+    grad_rc = x_rc.grad.squeeze(0).cpu().numpy()
+    attr_rc_raw = seq_rc * grad_rc
+    attr_rc = np.flip(attr_rc_raw, axis=-1)[[3, 2, 1, 0], :]
+    return 0.5 * (attr_fwd + attr_rc)
+
+
+def dinuc_shuffle_sequence(seq: str, seed: Optional[int] = None) -> str:
+    """Altschul-Erickson dinucleotide shuffle algorithm preserving exact dinuc counts and start/end bases."""
+    if len(seq) <= 2:
+        return seq
+    rng = random.Random(seed)
+    edges = defaultdict(list)
+    for i in range(len(seq) - 1):
+        edges[seq[i]].append(seq[i + 1])
+    last_char = seq[-1]
+    reserved_edges = {}
+    for char, nbrs in edges.items():
+        if char != last_char and nbrs:
+            reserved_edges[char] = nbrs[-1]
+            edges[char] = nbrs[:-1]
+    for char in edges:
+        rng.shuffle(edges[char])
+        if char in reserved_edges:
+            edges[char].append(reserved_edges[char])
+    result = [seq[0]]
+    curr = seq[0]
+    for _ in range(len(seq) - 1):
+        if not edges[curr]:
+            break
+        nxt = edges[curr].pop(0)
+        result.append(nxt)
+        curr = nxt
+    if len(result) < len(seq):
+        return seq
+    return "".join(result)
+
+
+def dinuc_shuffle_one_hot(x_np: np.ndarray, seed: Optional[int] = None) -> np.ndarray:
+    """Decode one-hot (4, L), dinucleotide shuffle, and re-encode to one-hot."""
+    nucs = ["A", "C", "G", "T"]
+    idx = np.argmax(x_np, axis=0)
+    all_zero = np.all(x_np == 0, axis=0)
+    seq = "".join(nucs[i] if not z else "N" for i, z in zip(idx, all_zero))
+    shuf_seq = dinuc_shuffle_sequence(seq, seed=seed)
+    return one_hot_encode_sequence(shuf_seq)
+
+
+def compute_integrated_gradients(
+    grafted_model: GraftedChromBPNet,
+    one_hot_seq: np.ndarray,
+    target: str = "y_abs",
+    steps: int = 20,
+    baseline: str = "zero",
+    device: str = "cpu",
+    rc_average: bool = True
+) -> np.ndarray:
+    """
+    Compute Integrated Gradients attribution across the sequence window.
+    Interpolates from baseline (zero or dinucleotide-shuffled) to input in `steps` steps.
+    Supports rc_average=True (averaging fwd and flipped revcomp attributions).
+    """
+    grafted_model.to(device)
+    grafted_model.eval()
+
+    def _ig_single_strand(x_np: np.ndarray) -> np.ndarray:
+        if baseline == "zero":
+            x_base = np.zeros_like(x_np)
+        elif baseline == "dinuc":
+            x_base = dinuc_shuffle_one_hot(x_np, seed=42)
+        else:
+            raise ValueError(f"Unsupported baseline: '{baseline}'. Expected 'zero' or 'dinuc'.")
+
+        diff = x_np - x_base
+        grads = []
+        for alpha in np.linspace(0.0, 1.0, steps + 1)[1:]:
+            x_step = x_base + alpha * diff
+            x_tensor = torch.tensor(x_step, dtype=torch.float32, device=device).unsqueeze(0).requires_grad_(True)
+            out = grafted_model(x_tensor, rc_average=False)
+            score = out[target].sum()
+            score.backward()
+            grads.append(x_tensor.grad.squeeze(0).cpu().numpy())
+            grafted_model.zero_grad()
+
+        avg_grad = np.mean(grads, axis=0)
+        return diff * avg_grad
+
+    attr_fwd = _ig_single_strand(one_hot_seq)
+    if not rc_average:
+        return attr_fwd
+
+    seq_rc = np.flip(one_hot_seq, axis=-1)[[3, 2, 1, 0], :]
+    attr_rc_raw = _ig_single_strand(seq_rc)
+    attr_rc = np.flip(attr_rc_raw, axis=-1)[[3, 2, 1, 0], :]
+    return 0.5 * (attr_fwd + attr_rc)
+
+
+def extract_causal_seqlet(
+    wt_importance: np.ndarray,
+    min_len: int = 8,
+    max_len: int = 18,
+    peak_center: Optional[int] = None
+) -> Tuple[int, int, float]:
+    """
+    Select the contiguous causal seqlet of length between min_len and max_len
+    that captures the core motif footprint without truncating heterodimers (e.g. Pou5f3::Sox19b).
+    Returns (start_idx, end_idx, score).
+    """
+    importance = np.array(wt_importance, dtype=np.float32)
+    L = len(importance)
+    if peak_center is None:
+        peak_center = int(np.argmax(importance))
+
+    best_score = -float("inf")
+    best_start = max(0, peak_center - min_len // 2)
+    best_end = min(L, best_start + min_len)
+
+    for w in range(min_len, min(max_len + 1, L + 1)):
+        s_min = max(0, peak_center - w + 1)
+        s_max = min(L - w, peak_center)
+        for s in range(s_min, s_max + 1):
+            e = s + w
+            sub = importance[s:e]
+            score = float(np.sum(sub) / np.sqrt(w))
+            if score > best_score:
+                best_score = score
+                best_start = s
+                best_end = e
+
+    return best_start, best_end, best_score
 
 
 def compute_in_silico_mutagenesis(
@@ -1077,7 +1318,11 @@ def annotate_motif_hits(
     and checks all partners in :: heterodimers.
     """
     if tomtom_df.empty:
-        return tomtom_df
+        df = tomtom_df.copy()
+        df["TF_name"] = pd.Series(dtype=str)
+        df["is_premzt_tf"] = pd.Series(dtype=bool)
+        df["maternal_cpm"] = pd.Series(dtype=float)
+        return df
 
     df = tomtom_df.copy()
     tf_list_set = set()
@@ -1099,14 +1344,34 @@ def annotate_motif_hits(
                     if len(p) >= 3:
                         motif_to_tf[p[1]] = p[2]
                         motif_to_tf[p[1].upper()] = p[2]
+                        motif_to_tf[f"{p[1]}_{p[2]}"] = p[2]
+                        motif_to_tf[f"{p[1]}_{p[2]}".upper()] = p[2]
                     elif len(p) == 2:
                         motif_to_tf[p[1]] = p[1]
+                        motif_to_tf[p[1].upper()] = p[1]
 
+    # Build a normalized lookup map from rnaseq_cpm_dict indexing BOTH raw lowercase gene symbols
+    # AND normalize_teleost_tf_name(k).lower(), taking MAX CPM across paralogs (e.g. sox19a/b -> sox2, pou5f3 -> pou5f1)
+    norm_cpm_dict: Dict[str, float] = {}
+    if rnaseq_cpm_dict:
+        for k, v in rnaseq_cpm_dict.items():
+            k_raw = str(k).strip().lower()
+            k_norm = normalize_teleost_tf_name(str(k)).strip().lower()
+            val = float(v)
+            norm_cpm_dict[k_raw] = max(norm_cpm_dict.get(k_raw, 0.0), val)
+            norm_cpm_dict[k_norm] = max(norm_cpm_dict.get(k_norm, 0.0), val)
+
+    tf_names = []
     is_premzt_list = []
     maternal_cpms = []
     for _, row in df.iterrows():
         t_id = str(row.get("Target_ID", ""))
         mapped_name = motif_to_tf.get(t_id, motif_to_tf.get(t_id.upper(), t_id))
+        if mapped_name == t_id and "_" in t_id:
+            parts = t_id.split("_", 1)
+            if parts[0].startswith("MA") or parts[0].startswith("UN"):
+                mapped_name = parts[1]
+        tf_names.append(mapped_name)
 
         # Check all partners in heterodimers (e.g. POU5F1::SOX2 or Pou5f3::Sox19b)
         partners = [p.strip() for p in mapped_name.split("::")]
@@ -1115,15 +1380,19 @@ def annotate_motif_hits(
         cpm_vals = []
         for p in partners:
             p_norm = normalize_teleost_tf_name(p)
-            if (p_norm in tf_list_set) or (p.upper() in tf_list_set) or (p_norm.upper() in tf_list_set):
+            if (p_norm in tf_list_set) or (p.upper() in tf_list_set) or (p_norm.upper() in tf_list_set) or (p.lower() in [s.lower() for s in tf_list_set]):
                 is_premzt = True
-            if rnaseq_cpm_dict:
-                c = rnaseq_cpm_dict.get(p.lower(), rnaseq_cpm_dict.get(p_norm.lower(), 0.0))
+            if norm_cpm_dict:
+                c = max(
+                    norm_cpm_dict.get(p.lower(), 0.0),
+                    norm_cpm_dict.get(p_norm.lower(), 0.0)
+                )
                 cpm_vals.append(c)
 
         is_premzt_list.append(is_premzt)
         maternal_cpms.append(max(cpm_vals) if cpm_vals else 0.0)
 
+    df["TF_name"] = tf_names
     df["is_premzt_tf"] = is_premzt_list
     df["maternal_cpm"] = maternal_cpms
     return df
@@ -1216,18 +1485,23 @@ def perform_evolutionary_alignment_and_swap(
         mat = one_hot_encode_sequence(s)
         return torch.tensor(mat, dtype=torch.float32, device=device).unsqueeze(0)
 
-    # 1. Score Wild-Type target window
+    # 1. Score Wild-Type target window (both y_abs and y_rel)
     with torch.no_grad():
-        score_target_wt = float(model(seq_to_tensor(target_window_seq))["y_abs"].squeeze().cpu().item())
+        out_wt = model(seq_to_tensor(target_window_seq), compute_late=True)
+        score_target_wt = float(out_wt["y_abs"].squeeze().cpu().item())
+        score_target_wt_rel = float(out_wt["y_rel"].squeeze().cpu().item())
 
     # 2. Strict in silico knockout / ablation control (N-masking)
     target_ablated = list(target_window_seq)
     target_ablated[motif_start_in_window:motif_start_in_window + motif_len] = ["N"] * motif_len
     target_ablated_seq = "".join(target_ablated)
     with torch.no_grad():
-        score_target_ablation = float(model(seq_to_tensor(target_ablated_seq))["y_abs"].squeeze().cpu().item())
+        out_abl = model(seq_to_tensor(target_ablated_seq), compute_late=True)
+        score_target_ablation = float(out_abl["y_abs"].squeeze().cpu().item())
+        score_target_ablation_rel = float(out_abl["y_rel"].squeeze().cpu().item())
 
     ablation_delta = score_target_ablation - score_target_wt
+    ablation_delta_rel = score_target_ablation_rel - score_target_wt_rel
 
     # 3. Align target flanking region against orthologous locus sequence (both strands)
     aligner = Align.PairwiseAligner()
@@ -1347,9 +1621,9 @@ def perform_evolutionary_alignment_and_swap(
                 if 'qry_path' in locals():
                     Path(qry_path).unlink(missing_ok=True)
 
-    # Sensitive k-mer search fallback (mode density bin instead of global median)
+    # Sensitive k-mer search fallback (mode density bin instead of global median, k=7 for ~220 MYA teleost divergence)
     if not found_homology:
-        k_len = 8
+        k_len = 7
         kmers = [
             target_flank[i:i + k_len]
             for i in range(0, len(target_flank) - k_len, 2)
@@ -1396,27 +1670,118 @@ def perform_evolutionary_alignment_and_swap(
             search_seq = ortholog_locus_seq[st:en]
             slice_offset = st
 
+    def _extract_aligned_motif_window(
+        aln: Optional[Any],
+        search_seq: str,
+        target_flank: str,
+        motif_rel_start: int,
+        motif_len: int,
+        half_window: int = 25
+    ) -> Tuple[str, str, str]:
+        """
+        Extract a compact ±half_window bp alignment snippet centered on the motif.
+        Returns (aligned_target_motif_window, aligned_match_bar, aligned_ortholog_motif_window).
+        """
+        if aln is None or not hasattr(aln, "indices"):
+            t_sub = target_flank[max(0, motif_rel_start - half_window): min(len(target_flank), motif_rel_start + motif_len + half_window)]
+            return t_sub, " " * len(t_sub), "-" * len(t_sub)
+
+        idx_ortho = aln.indices[0]
+        idx_target = aln.indices[1]
+
+        target_mid = motif_rel_start + motif_len // 2
+        valid_cols = np.where(idx_target >= 0)[0]
+        if len(valid_cols) == 0:
+            t_sub = target_flank[max(0, motif_rel_start - half_window): min(len(target_flank), motif_rel_start + motif_len + half_window)]
+            return t_sub, " " * len(t_sub), "-" * len(t_sub)
+
+        diffs = np.abs(idx_target[valid_cols] - target_mid)
+        best_col = valid_cols[int(np.argmin(diffs))]
+
+        col_st = max(0, best_col - half_window)
+        col_en = min(aln.indices.shape[1], best_col + half_window + 1)
+
+        aligned_t = []
+        aligned_o = []
+        match_bar = []
+        for c in range(col_st, col_en):
+            ti = idx_target[c]
+            oi = idx_ortho[c]
+            tc = target_flank[ti] if ti >= 0 else "-"
+            oc = search_seq[oi] if oi >= 0 else "-"
+            aligned_t.append(tc)
+            aligned_o.append(oc)
+            if tc == "-" or oc == "-":
+                match_bar.append(" ")
+            elif tc.upper() == oc.upper():
+                match_bar.append("|")
+            else:
+                match_bar.append(".")
+
+        return "".join(aligned_t), "".join(match_bar), "".join(aligned_o)
+
     alignments = aligner.align(search_seq, target_flank)
 
-    if len(alignments) == 0 or alignments[0].score < (len(target_flank) * 0.4):
+    is_homologous = False
+    best_aln = None
+    if len(alignments) > 0:
+        best_aln = alignments[0]
+        idx_ortho = best_aln.indices[0]
+        idx_target = best_aln.indices[1]
+        aligned_cols = (idx_ortho >= 0) & (idx_target >= 0)
+        aligned_len = int(np.sum(aligned_cols))
+        n_matches = sum(
+            1 for c in np.where(aligned_cols)[0]
+            if search_seq[idx_ortho[c]].upper() == target_flank[idx_target[c]].upper()
+        )
+        identity = n_matches / max(1, aligned_len)
+        if best_aln.score >= 60 and aligned_len >= 40 and identity >= 0.55:
+            is_homologous = True
+
+    if not is_homologous:
+        aln_t, aln_bar, aln_o = _extract_aligned_motif_window(
+            aln=best_aln,
+            search_seq=search_seq,
+            target_flank=target_flank,
+            motif_rel_start=motif_rel_start,
+            motif_len=motif_len,
+            half_window=25
+        )
+        is_lineage_gain = bool(ablation_delta < -0.05)
         return {
             "status": "insertion_in_target_novel_element",
-            "alignment_score": float(alignments[0].score) if len(alignments) > 0 else 0.0,
+            "alignment_score": float(best_aln.score) if best_aln is not None else 0.0,
             "target_wt": score_target_wt,
+            "target_wt_rel": score_target_wt_rel,
             "target_ablation_score": score_target_ablation,
+            "target_ablation_score_rel": score_target_ablation_rel,
             "target_ablation_delta": ablation_delta,
+            "target_ablation_delta_rel": ablation_delta_rel,
             "classification": "Target-specific novel enhancer (ortholog lacks syntenic alignment)",
             "ortholog_aligned_motif": None,
+            "aligned_target_motif_window": aln_t,
+            "aligned_match_bar": aln_bar,
+            "aligned_ortholog_motif_window": aln_o,
+            "target_flank": aln_t,
+            "ortholog_flank": aln_o,
+            "best_strand": best_strand,
+            "is_lineage_gain": is_lineage_gain,
             "target_swapped_with_ortholog": None,
+            "target_swapped_with_ortholog_rel": None,
             "target_swap_delta": None,
+            "target_swap_delta_rel": None,
             "ortholog_wt": None,
+            "ortholog_wt_rel": None,
             "ortholog_swapped_with_target": None,
-            "ortholog_swap_delta": None
+            "ortholog_swapped_with_target_rel": None,
+            "ortholog_swap_delta": None,
+            "ortholog_swap_delta_rel": None
         }
 
-    best_aln = alignments[0]
     aligned_ortholog_seq = None
     o_motif_start_in_locus = None
+    is_indel_swap = False
+    indel_diff = 0
 
     try:
         ortho_coords = best_aln.aligned[0]
@@ -1429,8 +1794,6 @@ def perform_evolutionary_alignment_and_swap(
                 if best_strand == "fwd":
                     aligned_ortholog_seq = ortholog_locus_seq[o_motif_start_in_locus:o_motif_start_in_locus + motif_len]
                 else:
-                    # In reverse strand match: search_seq is ortho_rc.
-                    # ortho_rc[o_motif_start_in_locus:...] aligns directly with target_flank in target's forward orientation!
                     if ortho_rc is None:
                         ortho_rc = revcomp(ortholog_locus_seq)
                     aligned_ortholog_seq = ortho_rc[o_motif_start_in_locus:o_motif_start_in_locus + motif_len]
@@ -1438,67 +1801,170 @@ def perform_evolutionary_alignment_and_swap(
     except Exception:
         aligned_ortholog_seq = None
 
+    # Indel-tolerant motif swap: if flank aligns cleanly (>= 20 bp on at least one side) but 1-3 bp indel inside motif
     if aligned_ortholog_seq is None or len(aligned_ortholog_seq) != motif_len:
+        motif_rel_end = motif_rel_start + motif_len
+        left_flank_aligned = int(np.sum((idx_ortho >= 0) & (idx_target >= 0) & (idx_target < motif_rel_start)))
+        right_flank_aligned = int(np.sum((idx_ortho >= 0) & (idx_target >= 0) & (idx_target >= motif_rel_end)))
+        if left_flank_aligned >= 20 or right_flank_aligned >= 20:
+            motif_cols = np.where((idx_target >= motif_rel_start) & (idx_target < motif_rel_end))[0]
+            if len(motif_cols) > 0:
+                min_c = min(motif_cols)
+                max_c = max(motif_cols)
+                ortho_indices_in_motif = [idx_ortho[c] for c in range(min_c, max_c + 1) if idx_ortho[c] >= 0]
+                if ortho_indices_in_motif:
+                    o_st_local = min(ortho_indices_in_motif)
+                    o_en_local = max(ortho_indices_in_motif) + 1
+                    indel_span_len = o_en_local - o_st_local
+                    if abs(indel_span_len - motif_len) <= 3 and indel_span_len >= 4:
+                        o_motif_start_in_locus = slice_offset + o_st_local
+                        if best_strand == "fwd":
+                            aligned_ortholog_seq = ortholog_locus_seq[o_motif_start_in_locus:o_motif_start_in_locus + indel_span_len]
+                        else:
+                            if ortho_rc is None:
+                                ortho_rc = revcomp(ortholog_locus_seq)
+                            aligned_ortholog_seq = ortho_rc[o_motif_start_in_locus:o_motif_start_in_locus + indel_span_len]
+                        is_indel_swap = True
+                        indel_diff = abs(indel_span_len - motif_len)
+
+    if aligned_ortholog_seq is None:
+        aln_t, aln_bar, aln_o = _extract_aligned_motif_window(
+            aln=best_aln,
+            search_seq=search_seq,
+            target_flank=target_flank,
+            motif_rel_start=motif_rel_start,
+            motif_len=motif_len,
+            half_window=25
+        )
         return {
             "status": "partial_alignment_motif_gapped",
             "alignment_score": float(best_aln.score),
             "target_wt": score_target_wt,
+            "target_wt_rel": score_target_wt_rel,
             "target_ablation_score": score_target_ablation,
+            "target_ablation_score_rel": score_target_ablation_rel,
             "target_ablation_delta": ablation_delta,
+            "target_ablation_delta_rel": ablation_delta_rel,
             "classification": f"Orthologous locus aligned ({best_strand}) with gap or indel across motif site",
             "ortholog_aligned_motif": None,
+            "aligned_target_motif_window": aln_t,
+            "aligned_match_bar": aln_bar,
+            "aligned_ortholog_motif_window": aln_o,
+            "target_flank": aln_t,
+            "ortholog_flank": aln_o,
+            "best_strand": best_strand,
+            "is_lineage_gain": False,
             "target_swapped_with_ortholog": None,
+            "target_swapped_with_ortholog_rel": None,
             "target_swap_delta": None,
+            "target_swap_delta_rel": None,
             "ortholog_wt": None,
+            "ortholog_wt_rel": None,
             "ortholog_swapped_with_target": None,
-            "ortholog_swap_delta": None
+            "ortholog_swapped_with_target_rel": None,
+            "ortholog_swap_delta": None,
+            "ortholog_swap_delta_rel": None
         }
 
-    target_swapped = list(target_window_seq)
-    target_swapped[motif_start_in_window:motif_start_in_window + motif_len] = list(aligned_ortholog_seq)
-    target_swapped_seq = "".join(target_swapped)
+    def _adjust_window_len(seq: str, target_len: int = 2114) -> str:
+        cur_len = len(seq)
+        if cur_len == target_len:
+            return seq
+        elif cur_len > target_len:
+            extra = cur_len - target_len
+            left_trim = extra // 2
+            right_trim = extra - left_trim
+            return seq[left_trim:cur_len - right_trim]
+        else:
+            short = target_len - cur_len
+            left_pad = short // 2
+            right_pad = short - left_pad
+            return ("N" * left_pad) + seq + ("N" * right_pad)
+
+    raw_swapped = target_window_seq[:motif_start_in_window] + aligned_ortholog_seq + target_window_seq[motif_start_in_window + motif_len:]
+    target_swapped_seq = _adjust_window_len(raw_swapped, len(target_window_seq))
 
     with torch.no_grad():
-        score_target_swapped = float(model(seq_to_tensor(target_swapped_seq))["y_abs"].squeeze().cpu().item())
+        out_swapped = model(seq_to_tensor(target_swapped_seq), compute_late=True)
+        score_target_swapped = float(out_swapped["y_abs"].squeeze().cpu().item())
+        score_target_swapped_rel = float(out_swapped["y_rel"].squeeze().cpu().item())
+        target_swap_delta = score_target_swapped - score_target_wt
+        target_swap_delta_rel = score_target_swapped_rel - score_target_wt_rel
 
     # Evaluate reciprocal swap in ortholog window
     w_len = len(target_window_seq)
-    real_motif_pos = o_motif_start_in_locus if best_strand == "fwd" else (len(ortholog_locus_seq) - (o_motif_start_in_locus + motif_len))
+    real_motif_pos = o_motif_start_in_locus if best_strand == "fwd" else (len(ortholog_locus_seq) - (o_motif_start_in_locus + len(aligned_ortholog_seq)))
     ortho_win_start = max(0, real_motif_pos - w_len // 2)
     ortho_win_end = ortho_win_start + w_len
 
     if ortho_win_end <= len(ortholog_locus_seq):
         ortho_win_seq = ortholog_locus_seq[ortho_win_start:ortho_win_end]
         ortho_motif_pos = real_motif_pos - ortho_win_start
-        ortho_swapped = list(ortho_win_seq)
         target_motif_seq = target_window_seq[motif_start_in_window:motif_start_in_window + motif_len]
-        # On reverse strand match, target_motif_seq must be reverse-complemented before inserting into ortholog forward strand
         insert_motif = revcomp(target_motif_seq) if best_strand == "rev" else target_motif_seq
-        ortho_swapped[ortho_motif_pos:ortho_motif_pos + motif_len] = list(insert_motif)
-        ortho_swapped_seq = "".join(ortho_swapped)
+        raw_ortho_swapped = ortho_win_seq[:ortho_motif_pos] + insert_motif + ortho_win_seq[ortho_motif_pos + len(aligned_ortholog_seq):]
+        ortho_swapped_seq = _adjust_window_len(raw_ortho_swapped, w_len)
 
         with torch.no_grad():
-            score_ortho_wt = float(model(seq_to_tensor(ortho_win_seq))["y_abs"].squeeze().cpu().item())
-            score_ortho_swapped = float(model(seq_to_tensor(ortho_swapped_seq))["y_abs"].squeeze().cpu().item())
+            out_ortho_wt = model(seq_to_tensor(ortho_win_seq), compute_late=True)
+            out_ortho_swapped = model(seq_to_tensor(ortho_swapped_seq), compute_late=True)
+            score_ortho_wt = float(out_ortho_wt["y_abs"].squeeze().cpu().item())
+            score_ortho_wt_rel = float(out_ortho_wt["y_rel"].squeeze().cpu().item())
+            score_ortho_swapped = float(out_ortho_swapped["y_abs"].squeeze().cpu().item())
+            score_ortho_swapped_rel = float(out_ortho_swapped["y_rel"].squeeze().cpu().item())
             ortho_delta = score_ortho_swapped - score_ortho_wt
+            ortho_delta_rel = score_ortho_swapped_rel - score_ortho_wt_rel
     else:
         score_ortho_wt = None
+        score_ortho_wt_rel = None
         score_ortho_swapped = None
+        score_ortho_swapped_rel = None
         ortho_delta = None
+        ortho_delta_rel = None
+
+    aln_t, aln_bar, aln_o = _extract_aligned_motif_window(
+        aln=best_aln,
+        search_seq=search_seq,
+        target_flank=target_flank,
+        motif_rel_start=motif_rel_start,
+        motif_len=motif_len,
+        half_window=25
+    )
+    is_lineage_gain = bool(target_swap_delta < -0.05)
+    class_desc = (
+        f"Syntenic local alignment found ({best_strand} strand): reciprocal swap of aligned ortholog bases ({indel_diff} bp indel)"
+        if is_indel_swap
+        else f"Syntenic local alignment found ({best_strand} strand): reciprocal swap of aligned ortholog bases"
+    )
 
     return {
         "status": "aligned_motif_turnover",
         "alignment_score": float(best_aln.score),
         "target_wt": score_target_wt,
+        "target_wt_rel": score_target_wt_rel,
         "target_ablation_score": score_target_ablation,
+        "target_ablation_score_rel": score_target_ablation_rel,
         "target_ablation_delta": ablation_delta,
-        "classification": f"Syntenic local alignment found ({best_strand} strand): reciprocal swap of aligned ortholog bases",
+        "target_ablation_delta_rel": ablation_delta_rel,
+        "classification": class_desc,
         "ortholog_aligned_motif": aligned_ortholog_seq,
+        "aligned_target_motif_window": aln_t,
+        "aligned_match_bar": aln_bar,
+        "aligned_ortholog_motif_window": aln_o,
+        "target_flank": aln_t,
+        "ortholog_flank": aln_o,
+        "best_strand": best_strand,
+        "is_lineage_gain": is_lineage_gain,
         "target_swapped_with_ortholog": score_target_swapped,
-        "target_swap_delta": score_target_swapped - score_target_wt,
+        "target_swapped_with_ortholog_rel": score_target_swapped_rel,
+        "target_swap_delta": target_swap_delta,
+        "target_swap_delta_rel": target_swap_delta_rel,
         "ortholog_wt": score_ortho_wt,
+        "ortholog_wt_rel": score_ortho_wt_rel,
         "ortholog_swapped_with_target": score_ortho_swapped,
-        "ortholog_swap_delta": ortho_delta
+        "ortholog_swapped_with_target_rel": score_ortho_swapped_rel,
+        "ortholog_swap_delta": ortho_delta,
+        "ortholog_swap_delta_rel": ortho_delta_rel
     }
 
 
@@ -1602,6 +2068,106 @@ def quantseq_3p_gene_scoring(
         "nascent_all_exons": total_signal,
         "ratio_3p_to_total": signal_3p / max(total_signal, 1e-6)
     }
+
+
+def select_gc_matched_controls(
+    df_genes: pd.DataFrame,
+    genome_fa_path: Union[str, Path],
+    pos_mask: Union[pd.Series, np.ndarray],
+    ctrl_pool_mask: Union[pd.Series, np.ndarray],
+    flank_bp: int = 1000,
+    max_controls: int = 300
+) -> np.ndarray:
+    """
+    Select expression- and GC-matched control genes from candidate pool.
+    Calculates GC% in promoter windows (TSS ± flank_bp) for positive genes and candidate controls.
+    Performs stratified/nearest-neighbor matching so control promoter GC% distribution matches positives.
+    Returns a boolean mask of length len(df_genes) where selected controls are True.
+    """
+    from pyfaidx import Fasta
+    genome = Fasta(str(genome_fa_path), as_raw=True)
+
+    pos_idx = np.where(pos_mask)[0]
+    ctrl_idx = np.where(ctrl_pool_mask)[0]
+
+    if len(pos_idx) == 0 or len(ctrl_idx) == 0:
+        return np.zeros(len(df_genes), dtype=bool)
+
+    def get_promoter_gc(idx_list):
+        gc_list = []
+        valid_indices = []
+        for i in idx_list:
+            row = df_genes.iloc[i]
+            chrom = str(row["chrom"])
+            if chrom not in genome:
+                continue
+            strand = str(row.get("strand", "+"))
+            if "tss" in row and pd.notna(row["tss"]):
+                tss = int(row["tss"])
+            elif "start" in row and pd.notna(row["start"]):
+                tss = int(row["start"]) if strand == "+" else int(row.get("end", row["start"]))
+            else:
+                continue
+
+            st = max(0, tss - flank_bp)
+            en = min(len(genome[chrom]), tss + flank_bp)
+            try:
+                seq = str(genome[chrom][st:en]).upper()
+            except Exception:
+                continue
+
+            if len(seq) == 0:
+                continue
+            gc = (seq.count("G") + seq.count("C")) / len(seq)
+            gc_list.append(gc)
+            valid_indices.append(i)
+        return np.array(valid_indices), np.array(gc_list)
+
+    v_pos_idx, pos_gc = get_promoter_gc(pos_idx)
+    v_ctrl_idx, ctrl_gc = get_promoter_gc(ctrl_idx)
+
+    if len(v_pos_idx) == 0 or len(v_ctrl_idx) == 0:
+        selected_mask = np.zeros(len(df_genes), dtype=bool)
+        selected_mask[ctrl_idx[:max_controls]] = True
+        return selected_mask
+
+    target_k = min(max_controls, len(v_ctrl_idx))
+    selected_ctrl_indices = set()
+    available_ctrl_indices = list(range(len(v_ctrl_idx)))
+    k_per_pos = max(1, target_k // max(1, len(v_pos_idx)))
+
+    for p_val in sorted(pos_gc):
+        if len(selected_ctrl_indices) >= target_k or not available_ctrl_indices:
+            break
+        diffs = [abs(ctrl_gc[ci] - p_val) for ci in available_ctrl_indices]
+        closest_order = np.argsort(diffs)
+        picks = []
+        for pick in closest_order:
+            if len(picks) >= k_per_pos or len(selected_ctrl_indices) >= target_k:
+                break
+            ci = available_ctrl_indices[pick]
+            selected_ctrl_indices.add(v_ctrl_idx[ci])
+            picks.append(ci)
+        available_ctrl_indices = [ci for ci in available_ctrl_indices if v_ctrl_idx[ci] not in selected_ctrl_indices]
+
+    med_pos_gc = float(np.median(pos_gc))
+    if len(selected_ctrl_indices) < target_k:
+        remaining = [ci for ci in range(len(v_ctrl_idx)) if v_ctrl_idx[ci] not in selected_ctrl_indices]
+        if remaining:
+            diffs_rem = [abs(ctrl_gc[ci] - med_pos_gc) for ci in remaining]
+            for pick in np.argsort(diffs_rem):
+                if len(selected_ctrl_indices) >= target_k:
+                    break
+                selected_ctrl_indices.add(v_ctrl_idx[remaining[pick]])
+
+    selected_mask = np.zeros(len(df_genes), dtype=bool)
+    selected_mask[list(selected_ctrl_indices)] = True
+
+    sel_ctrl_gc = [ctrl_gc[i] for i, idx in enumerate(v_ctrl_idx) if idx in selected_ctrl_indices]
+    mean_pos = float(np.mean(pos_gc)) * 100
+    mean_ctrl = float(np.mean(sel_ctrl_gc)) * 100 if sel_ctrl_gc else 0.0
+    print(f"[+] GC Matching: {len(v_pos_idx)} positive promoters (mean GC: {mean_pos:.2f}%) matched to {selected_mask.sum()} control promoters (mean GC: {mean_ctrl:.2f}%, Δ: {abs(mean_pos - mean_ctrl):.2f}%).")
+    return selected_mask
 
 
 if __name__ == "__main__":

@@ -249,7 +249,7 @@ def query_ena_portal_api(acc: str, timeout: int = 6) -> List[Dict[str, Any]]:
         pass
 
     # 2. Try search endpoint (e.g. for GSM accessions)
-    query_str = f'accession="{acc}" OR sample_accession="{acc}" OR experiment_accession="{acc}" OR secondary_sample_accession="{acc}"'
+    query_str = f'accession="{acc}" OR sample_accession="{acc}" OR experiment_accession="{acc}" OR secondary_sample_accession="{acc}" OR sample_alias="{acc}"'
     url_sr = f"https://www.ebi.ac.uk/ena/portal/api/search?result=read_run&query={urllib.parse.quote(query_str)}&fields=run_accession,library_layout,fastq_ftp&format=tsv"
     try:
         req = urllib.request.Request(url_sr, headers={"User-Agent": "Mozilla/5.0 (PreMZT-Pipeline)"})

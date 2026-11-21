@@ -23,6 +23,7 @@ Key Capabilities:
 
 import os
 import sys
+import re
 import math
 import json
 import gzip
@@ -135,32 +136,29 @@ def align_and_process_fastq(
     run_cmd(bt2_cmd, desc=f"Bowtie2 alignment for {output_bam.stem}")
 
     # 4. Filter exact chrM/MT, sort, deduplicate (paired-end requires name-sort -> fixmate -m -> coord-sort -> markdup)
-    markdup_bam = prefix.with_suffix(".markdup.bam")
     if trimmed_r2:
+        markdup_bam = prefix.with_suffix(".markdup.bam")
         pipe_cmd = (
-            f"samtools view -h -q 30 -F 1804 {raw_sam} | "
+            f"samtools view -h -q 30 -f 2 -F 1804 '{raw_sam}' | "
             f"awk -F'\\t' '/^@/ || ($3 != \"chrM\" && $3 != \"MT\" && $3 != \"M\" && $3 != \"chrMT\")' | "
             f"samtools sort -n -@ {threads} - | "
             f"samtools fixmate -m -@ {threads} - - | "
             f"samtools sort -@ {threads} - | "
-            f"samtools markdup -r -@ {threads} - {markdup_bam}"
+            f"samtools markdup -r -@ {threads} - '{markdup_bam}'"
         )
-        run_cmd(pipe_cmd, desc=f"Filtering chrM, fixmate -m and markdup (paired-end) for {output_bam.stem}")
+        run_cmd(pipe_cmd, desc=f"Filtering chrM, proper pairs (-f 2), fixmate -m and markdup (paired-end) for {output_bam.stem}")
+        shutil.move(str(markdup_bam), str(output_bam))
     else:
-        sorted_bam = prefix.with_suffix(".sorted.bam")
-        sort_cmd = (
-            f"samtools view -h -q 30 -F 1804 {raw_sam} | "
+        # Single-end: DO NOT deduplicate per ChromBPNet official guidelines so true cut pileups are not collapsed
+        pipe_cmd = (
+            f"samtools view -h -q 30 -F 1804 '{raw_sam}' | "
             f"awk -F'\\t' '/^@/ || ($3 != \"chrM\" && $3 != \"MT\" && $3 != \"M\" && $3 != \"chrMT\")' | "
-            f"samtools sort -@ {threads} -o {sorted_bam}"
+            f"samtools sort -@ {threads} -o '{output_bam}'"
         )
-        run_cmd(sort_cmd, desc=f"Filtering chrM and coordinate sorting (single-end) for {output_bam.stem}")
-        run_cmd(f"samtools markdup -r -@ {threads} {sorted_bam} {markdup_bam}", desc=f"Deduplication via samtools markdup for {output_bam.stem}")
-        sorted_bam.unlink(missing_ok=True)
+        run_cmd(pipe_cmd, desc=f"Filtering chrM and coordinate sorting (single-end, no markdup) for {output_bam.stem}")
 
     raw_sam.unlink(missing_ok=True)
-
-    shutil.move(str(markdup_bam), str(output_bam))
-    run_cmd(f"samtools index -@ {threads} {output_bam}", desc=f"Indexing {output_bam.name}")
+    run_cmd(f"samtools index -@ {threads} '{output_bam}'", desc=f"Indexing {output_bam.name}")
 
     # Cleanup trimmed FASTQs
     trimmed_r1.unlink(missing_ok=True)
@@ -176,7 +174,7 @@ def merge_bams(bam_list: List[Path], output_bam: Path, threads: int = 8) -> Path
     if len(bam_list) == 1:
         if bam_list[0].resolve() != output_bam.resolve():
             shutil.copy(bam_list[0], output_bam)
-            run_cmd(f"samtools index -@ {threads} {output_bam}", desc=f"Indexing {output_bam.name}")
+            run_cmd(f"samtools index -@ {threads} '{output_bam}'", desc=f"Indexing {output_bam.name}")
         return output_bam
 
     if output_bam.exists() and output_bam.stat().st_size > 10 * 1024 * 1024:
@@ -185,7 +183,7 @@ def merge_bams(bam_list: List[Path], output_bam: Path, threads: int = 8) -> Path
 
     cmd = ["samtools", "merge", "-@", str(threads), "-f", str(output_bam)] + [str(b) for b in bam_list]
     run_cmd(cmd, desc=f"Merging {len(bam_list)} BAMs into {output_bam.name}")
-    run_cmd(f"samtools index -@ {threads} {output_bam}", desc=f"Indexing {output_bam.name}")
+    run_cmd(f"samtools index -@ {threads} '{output_bam}'", desc=f"Indexing {output_bam.name}")
     return output_bam
 
 
@@ -279,8 +277,10 @@ def call_peaks_macs3(
         print(f"[+] MACS3 peaks already exist: {out_narrow}")
         return out_narrow, out_summits
 
-    is_pe = is_bam_paired_end(late_bam)
-    format_arg = "BAMPE" if is_pe else "BAM"
+    # ENCODE/ChromBPNet ATAC standard: treat both SE and PE as single-end BAM (-f BAM --nomodel --shift -100 --extsize 200)
+    # so MACS3 summits center strictly on 5' Tn5 cut sites rather than paired-end nucleosome midpoints
+    # and eliminates PE/SE mismatch crashes when control_bam is provided.
+    format_arg = "BAM"
 
     g_size = genome_size
     if not g_size:
@@ -300,13 +300,14 @@ def call_peaks_macs3(
         "--outdir", str(output_dir),
         "-n", prefix,
         "-q", "0.01",
+        "--nomodel",
+        "--shift", "-100",
+        "--extsize", "200",
         "--keep-dup", "all",
         "--call-summits"
     ]
     if control_bam and control_bam.exists():
         cmd.extend(["-c", str(control_bam)])
-    if not is_pe:
-        cmd.extend(["--nomodel", "--shift", "-100", "--extsize", "200"])
 
     run_cmd(cmd, desc=f"MACS3 peak calling for {species_name} (Format: {format_arg}, gsize: {g_size})")
 
@@ -321,13 +322,14 @@ def count_reads_in_summits(
     early_bam: Path,
     late_bam: Path,
     window_bp: int = 500,
-    threads: int = 8
+    threads: int = 8,
+    rel_eps: float = 1.0
 ) -> pd.DataFrame:
     """
     Quantify early and late blastula read counts in ±window_bp//2 windows around MACS3 summits.
     Computes continuous pre-MZT targets:
       y_abs = log2(cpm_early + 1.0)
-      y_rel = log2((cpm_early + 0.01) / (cpm_late + 0.01))
+      y_rel = log2((cpm_early + rel_eps) / (cpm_late + rel_eps))
     """
     half_w = window_bp // 2
     temp_windows_bed = summits_bed.parent / f"{summits_bed.stem}_windows_{window_bp}bp.bed"
@@ -371,7 +373,7 @@ def count_reads_in_summits(
 
         # Continuous Pre-MZT Target Formulations
         y_abs = math.log2(cpm_early + 1.0)
-        y_rel = math.log2((cpm_early + 0.01) / (cpm_late + 0.01))
+        y_rel = math.log2((cpm_early + rel_eps) / (cpm_late + rel_eps))
 
         data.append({
             "chrom": chrom,
@@ -396,9 +398,12 @@ def count_reads_in_summits(
 
 def parse_housekeeping_promoters(gtf_path: Path, flank_bp: int = 500) -> List[Tuple[str, int, int]]:
     """Extract promoter coordinates (TSS ± flank_bp) for canonical housekeeping genes from GTF."""
-    hk_keywords = [
-        "gapdh", "actb", "eif4", "rpl", "rps", "uba52", "tub", "hprt", "pgk1", "b2m", "tbp", "sdha", "polr2"
-    ]
+    hk_prefixes = (
+        "gapdh", "actb", "eif4", "rpl", "rps", "uba52", "tuba", "tubb", "hprt", "pgk1", "b2m", "tbp", "sdha", "polr2"
+    )
+    hk_pattern = re.compile(r'^(?:' + '|'.join(hk_prefixes) + r')(?:\b|[0-9a-z_-])', re.IGNORECASE)
+    gene_name_pattern = re.compile(r'gene_name\s+"([^"]+)"', re.IGNORECASE)
+
     regions = []
     try:
         open_fn = gzip.open(gtf_path, "rt") if str(gtf_path).endswith(".gz") else open(gtf_path, "rt")
@@ -408,11 +413,13 @@ def parse_housekeeping_promoters(gtf_path: Path, flank_bp: int = 500) -> List[Tu
                     continue
                 p = line.split("\t")
                 if len(p) >= 9 and p[2] == "gene":
-                    attrs = p[8].lower()
-                    if any(k in attrs for k in hk_keywords):
-                        chrom, s, e, strand = p[0], int(p[3]), int(p[4]), p[6]
-                        tss = s if strand == "+" else e
-                        regions.append((chrom, max(0, tss - flank_bp), tss + flank_bp))
+                    m = gene_name_pattern.search(p[8])
+                    if m:
+                        gname = m.group(1).strip()
+                        if hk_pattern.match(gname):
+                            chrom, s, e, strand = p[0], int(p[3]), int(p[4]), p[6]
+                            tss = s if strand == "+" else e
+                            regions.append((chrom, max(0, tss - flank_bp), tss + flank_bp))
     except Exception as e:
         print(f"[-] Notice parsing housekeeping promoters: {e}")
     return regions
@@ -532,6 +539,7 @@ def assign_leak_free_splits(
     # Label rows in dataframe based on fold_0
     test_set = set(fold_0["test"])
     val_set = set(fold_0["valid"])
+    train_set = set(fold_0["train"])
     split_col = []
     for c in df["chrom"]:
         c_str = str(c)
@@ -539,8 +547,10 @@ def assign_leak_free_splits(
             split_col.append("test")
         elif c_str in val_set:
             split_col.append("valid")
-        else:
+        elif c_str in train_set:
             split_col.append("train")
+        else:
+            split_col.append("excluded")
     df["split"] = split_col
 
     # Construct clean return dict without circular references
@@ -566,6 +576,7 @@ def main():
     parser.add_argument("--held-out-chr", default=None, help="Chromosome containing target locus to hold out in test split")
     parser.add_argument("--target-genes", nargs="*", default=["notch2", "slc35a3a"], help="Target genes to detect held_out_chr")
     parser.add_argument("--summit-window-bp", type=int, default=500, help="Summit counting window width in bp (default 500, i.e. ±250 bp)")
+    parser.add_argument("--rel-eps", type=float, default=1.0, help="Pseudocount eps for y_rel log2 ratio (default 1.0)")
     parser.add_argument("--genome-size", default=None, help="MACS3 effective genome size (e.g. 1.4e9 for zebrafish, 7.3e8 for medaka)")
     parser.add_argument("--exclude-housekeeping-promoters", action="store_true", help="Flag housekeeping promoters in summit targets")
     parser.add_argument("--cv-folds", type=int, default=5, help="Number of cross-validation folds (default 5)")
@@ -688,11 +699,11 @@ def main():
         fai_path = Path(str(genome_fa) + ".fai")
         if not fai_path.exists():
             print(f"[*] Indexing genome FASTA with samtools faidx: {genome_fa.name}...")
-            run_cmd(f"samtools faidx {genome_fa}", desc="Indexing genome FASTA")
+            run_cmd(f"samtools faidx '{genome_fa}'", desc="Indexing genome FASTA")
         if fai_path.exists() and fai_path.stat().st_size > 0:
-            run_cmd(f"awk '$1 !~ /^(chrM|MT|M|chrMT)$/ {{print $1\"\\t\"$2}}' {fai_path} > {chrom_sizes}")
+            run_cmd(f"awk '$1 !~ /^(chrM|MT|M|chrMT)$/ {{print $1\"\\t\"$2}}' '{fai_path}' > '{chrom_sizes}'")
         else:
-            run_cmd(f"samtools idxstats {late_bam_path} | awk '$2 > 0 && $1 !~ /^(chrM|MT|M|chrMT)$/ {{print $1\"\\t\"$2}}' > {chrom_sizes}")
+            run_cmd(f"samtools idxstats '{late_bam_path}' | awk '$2 > 0 && $1 !~ /^(chrM|MT|M|chrMT)$/ {{print $1\"\\t\"$2}}' > '{chrom_sizes}'")
 
     chrom_sizes_dict: Dict[str, int] = {}
     with open(chrom_sizes, "r") as f:
@@ -720,7 +731,8 @@ def main():
         early_bam=early_bam_path,
         late_bam=late_bam_path,
         window_bp=args.summit_window_bp,
-        threads=args.threads
+        threads=args.threads,
+        rel_eps=args.rel_eps
     )
 
     # 4. Dynamic miR-430 cluster downweighting / flagging
@@ -782,6 +794,43 @@ def main():
     print(f"    Valid: {chr_fold['valid']}")
     print(f"    Test:  {chr_fold['test']}")
 
+    # Export ChromBPNet-safe primary-chromosome peaks
+    # Contains ONLY peaks on chromosomes in chr_fold.json and >= 1100 bp away from start/end
+    allowed_fold_chroms = set(fold_0_dict["train"] + fold_0_dict["valid"] + fold_0_dict["test"])
+    primary_peaks_path = peaks_dir / f"{args.species}_late_peaks.primary.narrowPeak"
+    n_tot_p = 0
+    n_kept_p = 0
+    if narrow_peaks.exists():
+        with open(narrow_peaks, "r") as fin, open(primary_peaks_path, "w") as fout:
+            for line in fin:
+                if not line.strip() or line.startswith("#"):
+                    continue
+                parts = line.strip().split("\t")
+                if len(parts) < 10:
+                    continue
+                n_tot_p += 1
+                p_c = parts[0]
+                p_s = int(parts[1])
+                p_e = int(parts[2])
+                p_offset = int(parts[9])
+                p_summit = p_s + p_offset
+
+                if p_c not in allowed_fold_chroms:
+                    continue
+                chr_len = chrom_sizes_dict.get(p_c)
+                if chr_len is None:
+                    continue
+
+                if p_s >= 1100 and p_e <= (chr_len - 1100) and p_summit >= 1100 and p_summit <= (chr_len - 1100):
+                    fout.write(line)
+                    n_kept_p += 1
+
+        print(f"[+] Exported ChromBPNet-safe primary-chromosome peaks: {primary_peaks_path} ({n_kept_p:,} / {n_tot_p:,} peaks kept)")
+        # Also copy to species_dir for direct accessibility
+        species_primary_peak = species_dir / f"{args.species}_late_peaks.primary.narrowPeak"
+        if primary_peaks_path.resolve() != species_primary_peak.resolve():
+            shutil.copy(primary_peaks_path, species_primary_peak)
+
     # Export summit targets TSV
     out_tsv = species_dir / f"{args.species}_summit_targets.tsv"
     df_splits.to_csv(out_tsv, sep="\t", index=False)
@@ -795,9 +844,9 @@ def main():
             bg_filtered = species_dir / f"{lbl}.filtered.bg"
             tot = get_bam_total_reads(b_path)
             scale = 1e6 / tot
-            run_cmd(f"bedtools genomecov -ibam {b_path} -bg -scale {scale} | LC_ALL=C sort -k1,1 -k2,2n > {bg_tmp}")
-            run_cmd(f"awk 'NR==FNR {{c[$1]=1; next}} ($1 in c)' {chrom_sizes} {bg_tmp} > {bg_filtered}", desc=f"Filtering {lbl} bedGraph to contigs present in chrom.sizes")
-            run_cmd(f"bedGraphToBigWig {bg_filtered} {chrom_sizes} {bw_out}")
+            run_cmd(f"bedtools genomecov -ibam '{b_path}' -bg -scale {scale} | LC_ALL=C sort -k1,1 -k2,2n > '{bg_tmp}'")
+            run_cmd(f"awk 'NR==FNR {{c[$1]=1; next}} ($1 in c)' '{chrom_sizes}' '{bg_tmp}' > '{bg_filtered}'", desc=f"Filtering {lbl} bedGraph to contigs present in chrom.sizes")
+            run_cmd(f"bedGraphToBigWig '{bg_filtered}' '{chrom_sizes}' '{bw_out}'")
             bg_tmp.unlink(missing_ok=True)
             bg_filtered.unlink(missing_ok=True)
             print(f"[+] BigWig track generated: {bw_out}")

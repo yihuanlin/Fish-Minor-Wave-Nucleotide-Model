@@ -161,6 +161,8 @@ class TaskManager:
                 if exit_code == 0:
                     done_marker.touch()
                     info["status"] = "COMPLETED"
+                elif exit_code == 143 or info.get("status") == "CANCELLED":
+                    info["status"] = "CANCELLED"
                 else:
                     info["status"] = "FAILED"
             else:
@@ -218,7 +220,8 @@ class TaskManager:
         force_rerun: bool = False,
         env_vars: Optional[Dict[str, str]] = None,
         slurm_overrides: Optional[Dict[str, Any]] = None,
-        depends_on: Optional[Union[str, List[str]]] = None
+        depends_on: Optional[Union[str, List[str]]] = None,
+        requires_gpu: bool = False
     ) -> Dict[str, Any]:
         """
         Submit a task for background execution in an idempotent manner.
@@ -231,6 +234,7 @@ class TaskManager:
             env_vars: Extra environment variables.
             slurm_overrides: SLURM parameter overrides if backend == 'slurm'.
             depends_on: Task name or list of task names this task depends on.
+            requires_gpu: If True, serializes execution via exclusive flock on tasks/.gpu.lock.
         """
         task_dir = self._get_task_dir(task_name)
         status_file = task_dir / "status.json"
@@ -283,7 +287,7 @@ class TaskManager:
         # Compute arguments hash
         import shlex
         cmd_str = cmd if isinstance(cmd, str) else shlex.join([str(x) for x in cmd])
-        args_payload = json.dumps({"cmd": cmd_str, "args": args_dict or {}, "depends_on": dep_list}, sort_keys=True)
+        args_payload = json.dumps({"cmd": cmd_str, "args": args_dict or {}, "depends_on": dep_list, "requires_gpu": requires_gpu}, sort_keys=True)
         args_hash = hashlib.sha256(args_payload.encode()).hexdigest()[:16]
 
         run_env = os.environ.copy()
@@ -294,6 +298,7 @@ class TaskManager:
             # Create a robust runner script that records exit code and creates .done marker on code 0
             bin_dir = str(Path(sys.executable).parent)
             runner_script = task_dir / "run.sh"
+            gpu_lock_file = self.tasks_dir / ".gpu.lock"
             with open(runner_script, "w") as f:
                 f.write("#!/usr/bin/env bash\n")
                 f.write("set -o pipefail\n")
@@ -305,21 +310,65 @@ class TaskManager:
                     for dep in dep_list:
                         dep_dir = self._get_task_dir(dep)
                         f.write(f"echo \"[DEPENDENCY WAIT] Waiting for prerequisite task '{dep}'...\" >> \"{log_file}\"\n")
+                        f.write(f"echo \"Waiting on {dep}\" > \"{task_dir}/progress.txt\"\n")
                         f.write(f"while true; do\n")
                         f.write(f"    if [ -f \"{dep_dir}/.done\" ]; then\n")
                         f.write(f"        echo \"[DEPENDENCY OK] Prerequisite '{dep}' satisfied.\" >> \"{log_file}\"\n")
                         f.write(f"        break\n")
                         f.write(f"    fi\n")
+                        f.write(f"    if [ -f \"{dep_dir}/status.json\" ]; then\n")
+                        f.write(f"        if grep -q -E '\"status\": *\"CANCELLED\"' \"{dep_dir}/status.json\" 2>/dev/null; then\n")
+                        f.write(f"            echo \"[DEPENDENCY CANCELLED] Prerequisite '{dep}' was cancelled. Aborting.\" >> \"{log_file}\"\n")
+                        f.write(f"            echo 143 > \"{exit_code_file}\"\n")
+                        f.write(f"            echo \"Cancelled (prerequisite '{dep}' cancelled)\" > \"{task_dir}/progress.txt\"\n")
+                        f.write(f"            exit 143\n")
+                        f.write(f"        fi\n")
+                        f.write(f"        if grep -q -E '\"status\": *\"FAILED\"' \"{dep_dir}/status.json\" 2>/dev/null; then\n")
+                        f.write(f"            echo \"[DEPENDENCY FAILED] Prerequisite '{dep}' failed. Aborting.\" >> \"{log_file}\"\n")
+                        f.write(f"            echo 1 > \"{exit_code_file}\"\n")
+                        f.write(f"            echo \"Failed (prerequisite '{dep}' failed)\" > \"{task_dir}/progress.txt\"\n")
+                        f.write(f"            exit 1\n")
+                        f.write(f"        fi\n")
+                        f.write(f"    fi\n")
                         f.write(f"    if [ -f \"{dep_dir}/exit_code.txt\" ]; then\n")
                         f.write(f"        DEP_RC=$(cat \"{dep_dir}/exit_code.txt\" 2>/dev/null || echo 1)\n")
-                        f.write(f"        if [ \"$DEP_RC\" != \"0\" ]; then\n")
+                        f.write(f"        if [ \"$DEP_RC\" = \"143\" ]; then\n")
+                        f.write(f"            echo \"[DEPENDENCY CANCELLED] Prerequisite '{dep}' was cancelled (RC 143). Aborting.\" >> \"{log_file}\"\n")
+                        f.write(f"            echo 143 > \"{exit_code_file}\"\n")
+                        f.write(f"            echo \"Cancelled (prerequisite '{dep}' cancelled)\" > \"{task_dir}/progress.txt\"\n")
+                        f.write(f"            exit 143\n")
+                        f.write(f"        elif [ \"$DEP_RC\" != \"0\" ]; then\n")
                         f.write(f"            echo \"[DEPENDENCY ERROR] Prerequisite '{dep}' failed with exit code $DEP_RC. Aborting.\" >> \"{log_file}\"\n")
                         f.write(f"            echo 1 > \"{exit_code_file}\"\n")
+                        f.write(f"            echo \"Failed (prerequisite '{dep}' failed)\" > \"{task_dir}/progress.txt\"\n")
+                        f.write(f"            exit 1\n")
+                        f.write(f"        fi\n")
+                        f.write(f"    fi\n")
+                        f.write(f"    DEP_PID=\"\"\n")
+                        f.write(f"    if [ -f \"{dep_dir}/pid.txt\" ]; then\n")
+                        f.write(f"        DEP_PID=$(cat \"{dep_dir}/pid.txt\" 2>/dev/null | tr -d '[:space:]')\n")
+                        f.write(f"    elif [ -f \"{dep_dir}/status.json\" ]; then\n")
+                        f.write(f"        DEP_PID=$(grep -o -E '\"pid\": *[0-9]+' \"{dep_dir}/status.json\" 2>/dev/null | grep -o -E '[0-9]+')\n")
+                        f.write(f"    fi\n")
+                        f.write(f"    if [ -n \"$DEP_PID\" ] && ! kill -0 \"$DEP_PID\" 2>/dev/null; then\n")
+                        f.write(f"        sleep 2\n")
+                        f.write(f"        if [ ! -f \"{dep_dir}/.done\" ] && [ ! -f \"{dep_dir}/exit_code.txt\" ]; then\n")
+                        f.write(f"            echo \"[DEPENDENCY DIED] Prerequisite '{dep}' (PID $DEP_PID) terminated unexpectedly. Aborting.\" >> \"{log_file}\"\n")
+                        f.write(f"            echo 1 > \"{exit_code_file}\"\n")
+                        f.write(f"            echo \"Failed (prerequisite '{dep}' died)\" > \"{task_dir}/progress.txt\"\n")
                         f.write(f"            exit 1\n")
                         f.write(f"        fi\n")
                         f.write(f"    fi\n")
                         f.write(f"    sleep 3\n")
                         f.write(f"done\n")
+
+                if requires_gpu:
+                    f.write(f"echo \"Waiting for GPU lock...\" > \"{task_dir}/progress.txt\"\n")
+                    f.write(f"echo \"[GPU LOCK] Waiting for exclusive GPU lock on {gpu_lock_file}...\" >> \"{log_file}\"\n")
+                    f.write(f"exec 200>\"{gpu_lock_file}\"\n")
+                    f.write(f"flock 200\n")
+                    f.write(f"echo \"[GPU LOCK] Acquired exclusive GPU lock at $(date)\" >> \"{log_file}\"\n")
+                    f.write(f"echo \"Running (GPU acquired)\" > \"{task_dir}/progress.txt\"\n")
 
                 f.write(f"{cmd_str} >> \"{log_file}\" 2>&1\n")
                 f.write("RC=$?\n")
@@ -341,6 +390,7 @@ class TaskManager:
                 env=run_env
             )
             pid = int(res.stdout.strip())
+            (task_dir / "pid.txt").write_text(f"{pid}\n")
             time.sleep(0.3)  # Brief pause to ensure process initialization
             proc_start = self._get_process_start_time(pid)
 
@@ -353,6 +403,7 @@ class TaskManager:
                 "cmd": cmd_str,
                 "args_hash": args_hash,
                 "log_file": str(log_file),
+                "requires_gpu": requires_gpu,
                 "status": "RUNNING"
             }
             with open(status_file, "w") as f:
@@ -378,13 +429,20 @@ class TaskManager:
                 f.write(f"#SBATCH --mem={sbatch_opts.get('mem', '64G')}\n")
                 if "partition" in sbatch_opts and sbatch_opts["partition"]:
                     f.write(f"#SBATCH --partition={sbatch_opts['partition']}\n")
-                if "gres" in sbatch_opts and sbatch_opts["gres"]:
+                emit_gres = False
+                if slurm_overrides and "gres" in slurm_overrides and slurm_overrides["gres"]:
+                    emit_gres = True
+                elif requires_gpu and "gres" in sbatch_opts and sbatch_opts["gres"]:
+                    emit_gres = True
+
+                if emit_gres:
                     f.write(f"#SBATCH --gres={sbatch_opts['gres']}\n")
                 if dep_list:
                     dep_jobs = []
                     for dep in dep_list:
                         d_info = self.get_task_info(dep)
-                        if d_info.get("job_id"):
+                        # Only depend on active running/pending jobs; skip already COMPLETED dependencies to prevent sbatch rejection
+                        if d_info.get("job_id") and d_info.get("status") == "RUNNING":
                             dep_jobs.append(str(d_info["job_id"]))
                     if dep_jobs:
                         f.write(f"#SBATCH --dependency=afterok:{':'.join(dep_jobs)}\n")
@@ -470,6 +528,10 @@ class TaskManager:
         info["status"] = "CANCELLED"
         with open(status_file, "w") as f:
             json.dump(info, f, indent=2)
+        try:
+            (task_dir / "exit_code.txt").write_text("143\n")
+        except Exception:
+            pass
         return True
 
     def cancel_all(self) -> pd.DataFrame:
@@ -527,6 +589,10 @@ class TaskManager:
                     info["status"] = "CANCELLED"
                     with open(status_file, "w") as sf:
                         json.dump(info, sf, indent=2)
+                    try:
+                        (task_folder / "exit_code.txt").write_text("143\n")
+                    except Exception:
+                        pass
 
                     terminated_records.append({
                         "Task": t_name,

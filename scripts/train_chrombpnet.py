@@ -26,7 +26,7 @@ import shutil
 import argparse
 import subprocess
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Set
+from typing import Optional, Dict, Any, List, Set, Union
 
 # Ensure conda env bin directory is at the front of PATH
 bin_dir = str(Path(sys.prefix) / "bin")
@@ -63,24 +63,28 @@ def run_cmd(cmd: list | str, desc: str = "") -> subprocess.CompletedProcess:
     return res
 
 
-def get_supported_cli_flags(subcommand: List[str]) -> Set[str]:
+def get_supported_cli_flags(subcommand: Union[List[str], str]) -> Set[str]:
     """Inspect chrombpnet CLI options programmatically so unsupported flags are never passed."""
+    if isinstance(subcommand, str):
+        return set(re.findall(r'(?:^|[\s,\[(/])(--?[a-zA-Z][a-zA-Z0-9_-]*)', subcommand))
     try:
-        cmd = ["chrombpnet"] + subcommand + ["--help"]
+        cmd = ["chrombpnet"] + list(subcommand) + ["--help"]
         res = subprocess.run(cmd, capture_output=True, text=True, check=False)
         help_text = res.stdout + res.stderr
-        flags = set(re.findall(r'(-{1,2}[a-zA-Z0-9_\-]+)', help_text))
+        flags = set(re.findall(r'(?:^|[\s,\[(/])(--?[a-zA-Z][a-zA-Z0-9_-]*)', help_text))
         return flags
     except Exception:
         return set()
 
 
-def extract_chrombpnet_metrics(run_dir: Path) -> Dict[str, Any]:
-    """Parse real post-training ChromBPNet evaluation metrics from chrombpnet_run directory."""
+def extract_chrombpnet_metrics(run_dir: Path, bias_run_dir: Optional[Path] = None) -> Dict[str, Any]:
+    """Parse real post-training ChromBPNet evaluation metrics and Tn5 bias factorization QC metrics."""
     metrics = {
         "profile_pearson_r": None,
         "count_pearson_r": None,
-        "profile_median_jsd": None
+        "profile_median_jsd": None,
+        "bias_counts_pearson_r": None,
+        "bias_profile_jsd": None
     }
 
     def _get_nested(d: dict, *keys):
@@ -135,6 +139,34 @@ def extract_chrombpnet_metrics(run_dir: Path) -> Dict[str, Any]:
         except Exception:
             pass
 
+    # Search bias evaluation directories (both bias_run and chrombpnet_run)
+    bias_search_dirs = [run_dir]
+    if bias_run_dir is not None and bias_run_dir.exists():
+        bias_search_dirs.append(bias_run_dir)
+
+    for b_dir in bias_search_dirs:
+        bias_eval_files = (
+            list(b_dir.glob("**/*bias*metric*.json")) +
+            list(b_dir.glob("**/bias_metrics.json")) +
+            list(b_dir.glob("**/evaluation/*bias*.json"))
+        )
+        for bf in bias_eval_files:
+            try:
+                with open(bf, "r") as f:
+                    b_data = json.load(f)
+                if isinstance(b_data, dict):
+                    b_c_pr = _get_nested(b_data, "counts_metrics", "peaks", "pearsonr") or _get_nested(b_data, "counts_metrics", "regions", "pearsonr")
+                    if b_c_pr is not None and metrics["bias_counts_pearson_r"] is None:
+                        metrics["bias_counts_pearson_r"] = b_c_pr
+                    b_p_jsd = _get_nested(b_data, "profile_metrics", "peaks", "median_jsd") or _get_nested(b_data, "profile_metrics", "regions", "median_jsd")
+                    if b_p_jsd is not None and metrics["bias_profile_jsd"] is None:
+                        metrics["bias_profile_jsd"] = b_p_jsd
+            except Exception:
+                pass
+
+    if metrics["bias_counts_pearson_r"] is not None and metrics["bias_counts_pearson_r"] > 0.50:
+        print(f"[!] WARNING: Residual Tn5 sequence bias detected! Counts Pearson r = {metrics['bias_counts_pearson_r']:.3f} (> 0.50). Check bias model quality.", flush=True)
+
     # Search log files if JSON not found
     log_files = list(run_dir.glob("**/*.log")) + list(run_dir.glob("*.txt"))
     for lf in log_files:
@@ -168,6 +200,7 @@ def main():
     parser.add_argument("--chr-fold-json", default=None, help="Path to chr_fold.json mapping")
     parser.add_argument("--fold", type=str, default="0", help="Fold index")
     parser.add_argument("--use-pretrained-bias", action="store_true", help="Use pretrained Tn5 bias model if available")
+    parser.add_argument("--force-retrain-bias", action="store_true", help="Force retraining Tn5 sequence bias model even if already trained")
     parser.add_argument("--bias-model-path", default=None, help="Path to existing Tn5 bias model")
     parser.add_argument("--epochs", type=int, default=15, help="Number of training epochs")
     parser.add_argument("--batch-size", type=int, default=64, help="Batch size")
@@ -274,6 +307,39 @@ def main():
     print(f"[+] Using verified chromosome fold {args.fold}: {chr_fold_json}")
     print(f"    Train: {len(fold_dict['train'])} chroms, Valid: {len(fold_dict['valid'])} chroms, Test: {len(fold_dict['test'])} chroms")
 
+    # Parse chrom_sizes dictionary
+    chrom_sizes_dict: Dict[str, int] = {}
+    with open(chrom_sizes, "r") as cs_f:
+        for line in cs_f:
+            p = line.strip().split("\t")
+            if len(p) >= 2 and p[1].isdigit():
+                chrom_sizes_dict[p[0]] = int(p[1])
+
+    # Filter peaks_bed to primary chromosomes present in fold_dict and >= 1100 bp from boundary
+    allowed_chroms = set(fold_dict["train"] + fold_dict["valid"] + fold_dict["test"])
+    filtered_peaks_bed = prep_dir / f"{peaks_bed.stem}.primary.narrowPeak"
+    if not (filtered_peaks_bed.exists() and filtered_peaks_bed.stat().st_size > 0):
+        n_tot = 0
+        n_kept = 0
+        with open(peaks_bed, "r") as fin, open(filtered_peaks_bed, "w") as fout:
+            for line in fin:
+                if not line.strip() or line.startswith("#"):
+                    continue
+                p = line.strip().split("\t")
+                if len(p) < 10:
+                    continue
+                n_tot += 1
+                p_c, p_s, p_e = p[0], int(p[1]), int(p[2])
+                p_summit = p_s + int(p[9])
+                if p_c not in allowed_chroms or p_c not in chrom_sizes_dict:
+                    continue
+                c_len = chrom_sizes_dict[p_c]
+                if p_s >= 1100 and p_e <= (c_len - 1100) and p_summit >= 1100 and p_summit <= (c_len - 1100):
+                    fout.write(line)
+                    n_kept += 1
+        print(f"[+] Verified and filtered peaks for ChromBPNet: {filtered_peaks_bed} ({n_kept:,} / {n_tot:,} peaks kept)")
+    peaks_bed = filtered_peaks_bed
+
     # 3. Non-peak generation under prep_dir
     set_task_progress(work_dir, task_name, f"Generating non-peaks [Fold {args.fold}]")
     nonpeaks_bed = prep_dir / "nonpeaks.bed"
@@ -287,15 +353,21 @@ def main():
             "-fl", str(chr_fold_json),
             "-o", str(prep_dir / "nonpeaks")
         ]
-        try:
-            run_cmd(cmd_nonpeaks, desc="GC-matched non-peak extraction")
-            neg_bed = prep_dir / "nonpeaks_negatives.bed"
-            if neg_bed.exists() and neg_bed.stat().st_size > 0:
-                shutil.copy(neg_bed, nonpeaks_bed)
-        except Exception as e:
-            print(f"[-] chrombpnet prep nonpeaks notice ({e}); using bedtools shuffle fallback...")
-            cmd_shuffle = f"bedtools shuffle -i {peaks_bed} -g {chrom_sizes} -excl {peaks_bed} -chrom > {nonpeaks_bed}"
-            run_cmd(cmd_shuffle, desc="Generating non-peaks via bedtools shuffle")
+        run_cmd(cmd_nonpeaks, desc="GC-matched non-peak extraction via chrombpnet prep nonpeaks")
+        cand_negs = (
+            list(prep_dir.glob("*_negatives.bed")) +
+            list(prep_dir.glob("nonpeaks*.bed")) +
+            list(prep_dir.glob("*negatives*.bed"))
+        )
+        cand_negs = [p for p in cand_negs if p.resolve() != peaks_bed.resolve() and p.resolve() != nonpeaks_bed.resolve()]
+        if cand_negs and cand_negs[0].stat().st_size > 0:
+            shutil.copy(cand_negs[0], nonpeaks_bed)
+            print(f"[+] Successfully extracted GC-matched non-peaks: {cand_negs[0]} -> {nonpeaks_bed}")
+        else:
+            raise RuntimeError(
+                f"[FATAL] chrombpnet prep nonpeaks failed to produce negatives BED. Candidate files in {prep_dir}: "
+                f"{[p.name for p in prep_dir.glob('*')]}. Zero-mock policy strictly enforced."
+            )
 
     assert nonpeaks_bed.exists() and nonpeaks_bed.stat().st_size > 0, (
         f"[FATAL] Non-peaks BED generation failed: {nonpeaks_bed}"
@@ -312,14 +384,36 @@ def main():
             bias_model_path = cand_bias
             print(f"[+] Using centralized pretrained bias model: {bias_model_path}")
 
+    bias_run_dir = out_dir / "bias_run"
+    if not bias_model_path:
+        # Check if a valid trained bias checkpoint already exists in bias_run_dir (size > 10 KB)
+        if not args.force_retrain_bias and bias_run_dir.exists():
+            existing_candidates = [
+                bias_run_dir / "models" / "bias.pt",
+                bias_run_dir / "models" / "bias.h5",
+                bias_run_dir / "bias.pt",
+                bias_run_dir / "bias.h5"
+            ]
+            for ep in existing_candidates:
+                if ep.is_file() and ep.stat().st_size > 10 * 1024:
+                    bias_model_path = ep
+                    print(f"[+] Preserving & reusing existing trained native bias model: {bias_model_path} ({ep.stat().st_size / 1024:.1f} KB)")
+                    break
+            if not bias_model_path:
+                for ep in list(bias_run_dir.glob("models/*bias*")) + list(bias_run_dir.glob("*bias*")):
+                    if ep.is_file() and ep.suffix.lower() in [".pt", ".pth", ".h5", ".hdf5"] and ep.stat().st_size > 10 * 1024:
+                        bias_model_path = ep
+                        print(f"[+] Preserving & reusing existing trained native bias model: {bias_model_path} ({ep.stat().st_size / 1024:.1f} KB)")
+                        break
+
     if not bias_model_path:
         # Native Bias Pipeline execution into clean fresh directory
         set_task_progress(work_dir, task_name, f"Training Tn5 bias model [Fold {args.fold}]")
-        bias_run_dir = out_dir / "bias_run"
         if bias_run_dir.exists():
             shutil.rmtree(bias_run_dir)
 
         print(f"[*] Training native Tn5 sequence bias model via chrombpnet bias pipeline into {bias_run_dir}...")
+        bias_flags = get_supported_cli_flags(["bias", "pipeline"])
         cmd_bias = [
             "chrombpnet", "bias", "pipeline",
             "-g", str(genome_fa),
@@ -330,28 +424,43 @@ def main():
             "-p", str(peaks_bed),
             "-n", str(nonpeaks_bed),
             "-fl", str(chr_fold_json),
-            "-b", "0.5",
-            "-e", str(min(args.epochs, 50)),
-            "-bs", str(args.batch_size),
-            "--engine", "pytorch"
+            "-b", "0.5"
         ]
+        if "-e" in bias_flags:
+            cmd_bias.extend(["-e", str(min(args.epochs, 50))])
+        elif "--epochs" in bias_flags:
+            cmd_bias.extend(["--epochs", str(min(args.epochs, 50))])
+
+        if "-bs" in bias_flags:
+            cmd_bias.extend(["-bs", str(args.batch_size)])
+        elif "--batch-size" in bias_flags:
+            cmd_bias.extend(["--batch-size", str(args.batch_size)])
+
+        if "--engine" in bias_flags:
+            cmd_bias.extend(["--engine", "pytorch"])
 
         run_cmd(cmd_bias, desc="Native ChromBPNet Tn5 bias model training")
 
-        cand_models = (
-            sorted(list(bias_run_dir.glob("models/*bias*.pt"))) +
-            sorted(list(bias_run_dir.glob("models/*bias*.pth"))) +
-            sorted(list(bias_run_dir.glob("models/*bias*.ckpt"))) +
-            sorted(list(bias_run_dir.glob("models/*bias*.h5"))) +
-            sorted(list(bias_run_dir.glob("models/*.pt"))) +
-            sorted(list(bias_run_dir.glob("models/*.pth"))) +
-            sorted(list(bias_run_dir.glob("models/*.ckpt"))) +
-            sorted(list(bias_run_dir.glob("models/*.h5"))) +
-            sorted(list(bias_run_dir.glob("*.pt"))) +
-            sorted(list(bias_run_dir.glob("*.pth"))) +
-            sorted(list(bias_run_dir.glob("*.ckpt"))) +
-            sorted(list(bias_run_dir.glob("*.h5")))
-        )
+        # Discover trained bias model checkpoint strictly matching model extensions
+        valid_exts = {".pt", ".pth", ".ckpt", ".h5", ".hdf5"}
+        canonical_bias = [
+            bias_run_dir / "models" / "bias.pt",
+            bias_run_dir / "models" / "bias.h5",
+            bias_run_dir / "bias.pt",
+            bias_run_dir / "bias.h5"
+        ]
+        cand_models = [p for p in canonical_bias if p.is_file() and p.stat().st_size > 1024]
+        if not cand_models:
+            all_bias = (
+                list(bias_run_dir.glob("models/*bias*")) +
+                list(bias_run_dir.glob("models/*")) +
+                list(bias_run_dir.glob("*bias*")) +
+                list(bias_run_dir.glob("*"))
+            )
+            cand_models = [
+                p for p in all_bias
+                if p.is_file() and p.suffix.lower() in valid_exts and p.stat().st_size > 1024
+            ]
         assert cand_models, (
             f"[FATAL] chrombpnet bias pipeline did not produce a model in {bias_run_dir}. Zero-mock policy enforced."
         )
@@ -365,6 +474,7 @@ def main():
         shutil.rmtree(chrombpnet_run_dir)
 
     print(f"[*] Executing main ChromBPNet pipeline into {chrombpnet_run_dir}...")
+    pipeline_flags = get_supported_cli_flags(["pipeline"])
     cmd_pipeline = [
         "chrombpnet", "pipeline",
         "-g", str(genome_fa),
@@ -375,27 +485,39 @@ def main():
         "-p", str(peaks_bed),
         "-n", str(nonpeaks_bed),
         "-fl", str(chr_fold_json),
-        "-b", str(bias_model_path),
-        "-e", str(args.epochs),
-        "-bs", str(args.batch_size),
-        "--engine", "pytorch"
+        "-b", str(bias_model_path)
     ]
+    if "-e" in pipeline_flags:
+        cmd_pipeline.extend(["-e", str(args.epochs)])
+    elif "--epochs" in pipeline_flags:
+        cmd_pipeline.extend(["--epochs", str(args.epochs)])
+
+    if "-bs" in pipeline_flags:
+        cmd_pipeline.extend(["-bs", str(args.batch_size)])
+    elif "--batch-size" in pipeline_flags:
+        cmd_pipeline.extend(["--batch-size", str(args.batch_size)])
+
+    if "--engine" in pipeline_flags:
+        cmd_pipeline.extend(["--engine", "pytorch"])
 
     run_cmd(cmd_pipeline, desc="ChromBPNet training pipeline execution")
 
-    # 6. Verify generated debiased model checkpoint matching *.pt, *.pth, *.ckpt, *.h5
+    # 6. Verify generated debiased model checkpoint strictly matching *.pt, *.pth, *.ckpt, *.h5, *.hdf5
     cbp_models_dir = chrombpnet_run_dir / "models"
-    cand_nobias = (
-        list(cbp_models_dir.glob("*nobias*.pt")) +
-        list(cbp_models_dir.glob("*nobias*.pth")) +
-        list(cbp_models_dir.glob("*nobias*.ckpt")) +
-        list(cbp_models_dir.glob("*nobias*.h5")) +
-        list(cbp_models_dir.glob("*nobias*.hdf5")) +
-        list(chrombpnet_run_dir.glob("**/*nobias*.pt")) +
-        list(chrombpnet_run_dir.glob("**/*nobias*.pth")) +
-        list(chrombpnet_run_dir.glob("**/*nobias*.ckpt")) +
-        list(chrombpnet_run_dir.glob("**/*nobias*.h5"))
-    )
+    valid_exts = {".pt", ".pth", ".ckpt", ".h5", ".hdf5"}
+    canonical_nobias = [
+        cbp_models_dir / "chrombpnet_nobias.pt",
+        cbp_models_dir / "chrombpnet_nobias.h5",
+        chrombpnet_run_dir / "chrombpnet_nobias.pt",
+        chrombpnet_run_dir / "chrombpnet_nobias.h5"
+    ]
+    cand_nobias = [p for p in canonical_nobias if p.is_file() and p.stat().st_size > 1024]
+    if not cand_nobias:
+        all_nobias = list(cbp_models_dir.glob("*nobias*")) + list(chrombpnet_run_dir.glob("**/*nobias*"))
+        cand_nobias = [
+            p for p in all_nobias
+            if p.is_file() and p.suffix.lower() in valid_exts and p.stat().st_size > 1024
+        ]
     assert cand_nobias, (
         f"[FATAL] chrombpnet pipeline finished but no debiased checkpoint (*nobias*.pt or *nobias*.h5) found in {cbp_models_dir}. "
         f"Zero-mock policy strictly enforced: training failed."
@@ -410,12 +532,15 @@ def main():
     print(f"[+] Verified debiased PyTorch checkpoint: {nobias_pt} ({nobias_pt.stat().st_size / 1e6:.1f} MB)")
 
     # 7. Extract real evaluation QC metrics
-    metrics = extract_chrombpnet_metrics(chrombpnet_run_dir)
+    bias_run_dir = out_dir / "bias_run"
+    metrics = extract_chrombpnet_metrics(chrombpnet_run_dir, bias_run_dir=bias_run_dir if bias_run_dir.exists() else None)
     print("=" * 80)
     print(f"[*] Post-Training ChromBPNet QC Evaluation Metrics:")
-    print(f"    Profile Pearson r:   {metrics['profile_pearson_r']}")
-    print(f"    Count Pearson r:     {metrics['count_pearson_r']}")
-    print(f"    Profile Median JSD:  {metrics['profile_median_jsd']}")
+    print(f"    Profile Pearson r:      {metrics['profile_pearson_r']}")
+    print(f"    Count Pearson r:        {metrics['count_pearson_r']}")
+    print(f"    Profile Median JSD:     {metrics['profile_median_jsd']}")
+    print(f"    Bias Counts Pearson r:  {metrics['bias_counts_pearson_r']}")
+    print(f"    Bias Profile JSD:       {metrics['bias_profile_jsd']}")
     print("=" * 80)
 
     # Export training metadata
