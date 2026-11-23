@@ -59,7 +59,7 @@ This repository implements a modular sequence-to-function transfer learning plat
 ├── scripts/                   # Modular, CLI-callable worker scripts
 │   ├── task_manager.py        # Persistent background job executor (Local + SLURM) with live progress tracking
 │   ├── download_resources.py  # Consolidated resource downloader, integrity verifier & cleanup
-│   ├── prep_atac.py           # ATAC preprocessing, MACS3 peaks & continuous targets
+│   ├── prep_atac.py           # ATAC preprocessing, native Poisson peaks & continuous targets
 │   ├── train_chrombpnet.py    # GC-matched nonpeaks & Stage 1 ChromBPNet training
 │   ├── prep_slamseq.py        # Nascent RNA-seq SLAM-seq STAR alignment & SNP masking
 │   ├── train_ntv3.py          # Multi-task NTv3 fine-tuning (LoRA / DDP full)
@@ -68,7 +68,7 @@ This repository implements a modular sequence-to-function transfer learning plat
     ├── config.json            # Centralized snapshot of Block 0 parameters
     ├── tasks/                 # Background task logs, status.json, and .done markers
     ├── downloads/             # Auto-downloaded genomes, GTFs, and JASPAR databases
-    ├── atac/                  # Processed BAMs, MACS3 peaks, summit target TSVs
+    ├── atac/                  # Processed BAMs, native Poisson peaks, summit target TSVs
     ├── slamseq_zf/            # Processed nascent SLAM-seq tracks & STAR indices
     ├── models/                # Trained ChromBPNet and NTv3 model checkpoints
     └── results/               # Publication figures (PNG/SVG), IGV tracks, and summary TSVs
@@ -149,7 +149,7 @@ tm.cancel("train_chrombpnet_danio_rerio")
 
 1. **Block 0:** Configure study name, target species, target genes (`notch2`, `slc35a3a`), BAM paths, compute profile, and auto-download reference resources.
 2. **Block 1:** Run `featureCounts` and `PyDESeq2` on `AC_2C` vs. `AC_1K` RNA-seq BAMs. Classify minor-wave genes and plot volcano and coverage diagnostics.
-3. **Block 2:** Preprocess ATAC-seq for Zebrafish (*GRCz11*) and Medaka (*ASM223467v1*), calling MACS3 late peaks and generating continuous targets `y_abs` and `y_rel`. Launch Stage 1 ChromBPNet training.
+3. **Block 2:** Preprocess ATAC-seq for Zebrafish (*GRCz11*) and Medaka (*ASM223467v1*), calling native local-lambda Poisson late peaks and generating continuous targets `y_abs` and `y_rel`. Launch Stage 1 ChromBPNet training.
 4. **Block 3:** Extract penultimate encoder embeddings, train `RidgeCV` linear probes, verify held-out test chromosome metrics ($r$ and AUROC), and graft linear heads onto frozen encoders.
 5. **Block 4:** Perform zero-shot transfer prediction on target-species TSS regions (±25 kb), calculating ROC-AUC and Mann-Whitney $U$ statistics.
 6. **Block 5:** Run an unbiased sliding-window scan across the target locus (`notch2_slc35a3a` ± 75 kb) in target species, Zebrafish, and Medaka.

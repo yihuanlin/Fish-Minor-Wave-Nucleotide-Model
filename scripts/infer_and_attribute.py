@@ -52,6 +52,15 @@ import torch
 import torch.nn as nn
 import chrombpnet
 
+try:
+    from scripts.task_manager import set_task_progress
+except ImportError:
+    try:
+        from task_manager import set_task_progress
+    except ImportError:
+        def set_task_progress(work_dir, task_name, progress_str):
+            pass
+
 
 # ==============================================================================
 # Helper: Fast One-Hot Encoding & Reverse Complement
@@ -218,8 +227,16 @@ class GraftedChromBPNet(nn.Module):
         enc = self.encoder.tf_model if hasattr(self.encoder, "tf_model") else self.encoder
 
         # Base late accessibility predicted logcounts from underlying trained encoder
-        if hasattr(enc, "count_dense") and enc.count_dense is not None:
-            out_late = enc.count_dense(emb).reshape(-1)
+        # Check all possible counts-head attribute names on BPNet / ChromBPNet to reuse emb
+        counts_head = None
+        for cand_attr in ["count_dense", "counts_head", "count_linear", "counts_dense", "linear_counts"]:
+            if hasattr(enc, cand_attr) and getattr(enc, cand_attr) is not None:
+                counts_head = getattr(enc, cand_attr)
+                break
+
+        if counts_head is not None:
+            # Reuses already-computed emb (single CNN pass instead of re-running CNN twice)
+            out_late = counts_head(emb).reshape(-1)
         elif return_late or compute_late:
             x_in = x
             if x_in.ndim == 3 and x_in.shape[1] != 4 and x_in.shape[2] == 4:
@@ -365,12 +382,12 @@ def load_grafted_model(
 
     grafted = GraftedChromBPNet(
         encoder=base_encoder,
-        coef_abs=payload["coef_abs"].numpy(),
+        coef_abs=(payload["coef_abs"].cpu().numpy() if isinstance(payload["coef_abs"], torch.Tensor) else np.asarray(payload["coef_abs"])),
         intercept_abs=float(payload["intercept_abs"]),
-        coef_rel=payload["coef_rel"].numpy(),
+        coef_rel=(payload["coef_rel"].cpu().numpy() if isinstance(payload["coef_rel"], torch.Tensor) else np.asarray(payload["coef_rel"])),
         intercept_rel=float(payload["intercept_rel"]),
-        scaler_mean=payload["scaler_mean"].numpy(),
-        scaler_scale=payload["scaler_scale"].numpy()
+        scaler_mean=(payload["scaler_mean"].cpu().numpy() if isinstance(payload["scaler_mean"], torch.Tensor) else np.asarray(payload["scaler_mean"])),
+        scaler_scale=(payload["scaler_scale"].cpu().numpy() if isinstance(payload["scaler_scale"], torch.Tensor) else np.asarray(payload["scaler_scale"]))
     )
     if payload.get("base_checkpoint_path"):
         grafted.base_checkpoint_path = payload["base_checkpoint_path"]
@@ -681,11 +698,14 @@ def score_tss_regions(
     flank_bp: int = 25000,
     window_bp: int = 2114,
     stride_bp: int = 250,
-    batch_size: int = 64,
-    device: Optional[str] = None
+    batch_size: int = 256,
+    device: Optional[str] = None,
+    work_dir: Optional[Union[str, Path]] = None,
+    task_name: Optional[str] = None
 ) -> pd.DataFrame:
     """
     Score ±flank_bp around gene TSSs with grafted models, taking max predicted accessibility.
+    Vectorized sliding window slicing (one-hot encoding full flank once) + torch.amp.autocast.
     Resolves gene_id consistently from gene_id or Geneid.
     Returns pred_max_y_abs, pred_max_y_rel, and pred_max_late.
     """
@@ -709,8 +729,10 @@ def score_tss_regions(
         eval_df = pd.concat([eval_df[~ctrl_mask], ctrl_sampled])
 
     results = []
+    total_genes = len(eval_df)
+    autocast_enabled = (str(device).startswith("cuda") and torch.cuda.is_available())
 
-    for idx, row in eval_df.iterrows():
+    for idx_count, (idx, row) in enumerate(eval_df.iterrows(), start=1):
         chrom = str(row["chrom"])
         strand = str(row.get("strand", "+"))
         tss = int(row["start"]) if strand == "+" else int(row["end"])
@@ -733,23 +755,23 @@ def score_tss_regions(
         if n_windows <= 0:
             continue
 
-        windows = []
-        for i in range(n_windows):
-            sub_seq = seq[i * stride_bp: i * stride_bp + window_bp]
-            windows.append(one_hot_encode_sequence(sub_seq))
+        # Vectorized extraction: One-hot encode the full 2 * flank_bp sequence ONCE
+        full_enc = one_hot_encode_sequence(seq)  # shape: (4, len(seq))
+        windows = np.stack([full_enc[:, i * stride_bp : i * stride_bp + window_bp] for i in range(n_windows)])
 
         max_y_abs = -1e9
         max_y_rel = -1e9
         max_late = -1e9
 
         for b_start in range(0, len(windows), batch_size):
-            b_chunk = windows[b_start:b_start + batch_size]
-            b_tensor = torch.tensor(np.array(b_chunk), dtype=torch.float32, device=device)
+            b_chunk = windows[b_start : b_start + batch_size]
+            b_tensor = torch.tensor(b_chunk, dtype=torch.float32, device=device)
             with torch.no_grad():
-                out = grafted_model(b_tensor, compute_late=True)
-                chunk_abs = float(torch.max(out["y_abs"]).cpu().item())
-                chunk_rel = float(torch.max(out["y_rel"]).cpu().item())
-                chunk_late = float(torch.max(out.get("pred_late", out.get("late_logcounts", out["y_abs"]))).cpu().item())
+                with torch.amp.autocast("cuda", dtype=torch.bfloat16, enabled=autocast_enabled):
+                    out = grafted_model(b_tensor, compute_late=True)
+                    chunk_abs = float(torch.max(out["y_abs"]).cpu().item())
+                    chunk_rel = float(torch.max(out["y_rel"]).cpu().item())
+                    chunk_late = float(torch.max(out.get("pred_late", out.get("late_logcounts", out["y_abs"]))).cpu().item())
 
                 if chunk_abs > max_y_abs:
                     max_y_abs = chunk_abs
@@ -757,6 +779,10 @@ def score_tss_regions(
                     max_y_rel = chunk_rel
                 if chunk_late > max_late:
                     max_late = chunk_late
+
+        if work_dir and task_name and (idx_count % 25 == 0 or idx_count == total_genes):
+            pct = (idx_count / total_genes) * 100
+            set_task_progress(work_dir, task_name, f"Scoring genes {idx_count}/{total_genes} ({pct:.1f}%)")
 
         res_item = {
             "gene_id": gene_id,

@@ -49,10 +49,15 @@ class TaskManager:
             "gres": "gpu:1",
             "job_name": "nucleotide_job"
         }
-        self.tasks_dir = self.work_dir / "tasks"
+        if self.work_dir.name == "tasks":
+            self.tasks_dir = self.work_dir
+        else:
+            self.tasks_dir = self.work_dir / "tasks"
         self.tasks_dir.mkdir(parents=True, exist_ok=True)
 
     def _get_task_dir(self, task_name: str) -> Path:
+        if task_name == "tasks":
+            return self.tasks_dir
         task_dir = self.tasks_dir / task_name
         task_dir.mkdir(parents=True, exist_ok=True)
         return task_dir
@@ -78,6 +83,22 @@ class TaskManager:
         except Exception:
             pass
         return None
+
+    @staticmethod
+    def _is_pgid_alive(pgid: int) -> bool:
+        """Check if process group is alive and distinct from current process group."""
+        try:
+            if not pgid or pgid <= 0:
+                return False
+            curr_pgid = os.getpgrp()
+            if pgid == curr_pgid:
+                return False
+            os.killpg(pgid, 0)
+            return True
+        except (ProcessLookupError, PermissionError):
+            return False
+        except Exception:
+            return False
 
     @staticmethod
     def _is_pid_alive(pid: int, recorded_start_time: Optional[int] = None) -> bool:
@@ -171,7 +192,29 @@ class TaskManager:
                 if backend == "local_background":
                     pid = info.get("pid")
                     start_time = info.get("start_time_proc")
-                    if pid and self._is_pid_alive(pid, start_time):
+
+                    # Fallback to pid.txt if status.json lacks pid or has a stale PID
+                    pid_file = task_dir / "pid.txt"
+                    if pid_file.exists():
+                        try:
+                            disk_pid = int(pid_file.read_text().strip())
+                            if not pid or (not self._is_pid_alive(pid, start_time) and (self._is_pid_alive(disk_pid) or self._is_pgid_alive(disk_pid))):
+                                pid = disk_pid
+                                info["pid"] = pid
+                                start_time = self._get_process_start_time(disk_pid)
+                                info["start_time_proc"] = start_time
+                        except Exception:
+                            pass
+
+                    # Treat task as RUNNING if PID is alive or process group is alive without exit markers
+                    is_alive = False
+                    if pid:
+                        if self._is_pid_alive(pid, start_time):
+                            is_alive = True
+                        elif not done_marker.exists() and not (task_dir / "exit_code.txt").exists() and self._is_pgid_alive(pid):
+                            is_alive = True
+
+                    if is_alive:
                         info["status"] = "RUNNING"
                         info["elapsed_sec"] = time.time() - info.get("submit_time", time.time())
                     else:
@@ -301,6 +344,7 @@ class TaskManager:
             gpu_lock_file = self.tasks_dir / ".gpu.lock"
             with open(runner_script, "w") as f:
                 f.write("#!/usr/bin/env bash\n")
+                f.write(f"echo $$ > \"{task_dir}/pid.txt\"\n")
                 f.write("set -o pipefail\n")
                 f.write(f"export PATH=\"{bin_dir}:$PATH\"\n")
                 f.write(f"cd \"{Path.cwd().resolve()}\"\n")
@@ -380,18 +424,35 @@ class TaskManager:
                 f.write("exit $RC\n")
             runner_script.chmod(0o755)
 
-            # Spawn fully detached process in its own session (pgid == pid)
-            res = subprocess.run(
-                ["/usr/bin/env", "bash", "-c", f"setsid bash \"{runner_script}\" </dev/null >/dev/null 2>&1 & echo $!"],
+            # Remove pre-launch pid.txt
+            pid_file = task_dir / "pid.txt"
+            pid_file.unlink(missing_ok=True)
+
+            # Spawn fully detached process in its own session (setsid guarantees pgid == pid)
+            subprocess.run(
+                ["/usr/bin/env", "bash", "-c", f"setsid bash \"{runner_script}\" </dev/null >/dev/null 2>&1 &"],
                 cwd=str(Path.cwd().resolve()),
-                capture_output=True,
-                text=True,
                 check=True,
                 env=run_env
             )
-            pid = int(res.stdout.strip())
-            (task_dir / "pid.txt").write_text(f"{pid}\n")
-            time.sleep(0.3)  # Brief pause to ensure process initialization
+
+            # Poll pid.txt for up to 3 seconds to read actual bash PID
+            pid = None
+            t_poll_start = time.time()
+            while time.time() - t_poll_start < 3.0:
+                if pid_file.exists():
+                    try:
+                        content = pid_file.read_text().strip()
+                        if content:
+                            pid = int(content)
+                            break
+                    except Exception:
+                        pass
+                time.sleep(0.05)
+
+            if pid is None:
+                raise RuntimeError(f"Failed to capture process PID from {pid_file} after 3 seconds.")
+
             proc_start = self._get_process_start_time(pid)
 
             status_payload = {
@@ -494,31 +555,48 @@ class TaskManager:
         backend = info.get("backend", "local_background")
         if backend == "local_background":
             pid = info.get("pid")
-            if pid:
+            start_time = info.get("start_time_proc")
+            if not pid and (task_dir / "pid.txt").exists():
                 try:
-                    # Kill entire process group if distinct from current process group
-                    curr_pgid = os.getpgrp()
-                    pgid = os.getpgid(pid)
-                    if pgid != curr_pgid:
-                        os.killpg(pgid, signal.SIGTERM)
-                        time.sleep(0.5)
+                    pid = int((task_dir / "pid.txt").read_text().strip())
+                except Exception:
+                    pass
+            if pid:
+                if start_time is not None and not self._is_pid_alive(pid, start_time):
+                    print(f"[CANCELLED] Process {pid} for task '{task_name}' already finished or PID recycled.")
+                else:
+                    try:
+                        curr_pgid = os.getpgrp()
                         try:
-                            os.killpg(pgid, signal.SIGKILL)
-                        except ProcessLookupError:
-                            pass
-                    else:
-                        os.kill(pid, signal.SIGTERM)
-                        time.sleep(0.5)
+                            pgid = os.getpgid(pid)
+                        except Exception:
+                            pgid = pid
+                        if pgid and pgid != curr_pgid:
+                            try:
+                                os.killpg(pgid, signal.SIGTERM)
+                            except ProcessLookupError:
+                                pass
+                            time.sleep(0.3)
+                            try:
+                                os.killpg(pgid, signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+                        else:
+                            try:
+                                os.kill(pid, signal.SIGTERM)
+                            except ProcessLookupError:
+                                pass
+                            time.sleep(0.3)
+                            try:
+                                os.kill(pid, signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+                    except Exception:
                         try:
                             os.kill(pid, signal.SIGKILL)
-                        except ProcessLookupError:
+                        except Exception:
                             pass
-                except Exception:
-                    try:
-                        os.kill(pid, signal.SIGKILL)
-                    except Exception:
-                        pass
-                print(f"[CANCELLED] Terminated local task '{task_name}' (PID: {pid}).")
+                    print(f"[CANCELLED] Terminated local task '{task_name}' (PID: {pid}).")
         elif backend == "slurm":
             job_id = info.get("job_id")
             if job_id:
@@ -543,7 +621,7 @@ class TaskManager:
         terminated_records = []
         if self.tasks_dir.exists():
             for task_folder in sorted(self.tasks_dir.iterdir()):
-                if not task_folder.is_dir():
+                if not task_folder.is_dir() or task_folder.name == "tasks" or task_folder.name.startswith("."):
                     continue
                 t_name = task_folder.name
                 info = self.get_task_info(t_name)
@@ -554,34 +632,53 @@ class TaskManager:
                 status_file = task_folder / "status.json"
 
                 action_taken = "None"
-                # If RUNNING or has an active PID, terminate it
-                if status == "RUNNING" or (pid and self._is_pid_alive(pid)):
+                # If RUNNING or has an active PID or active PGID, terminate it
+                start_time = info.get("start_time_proc")
+                is_active = (status == "RUNNING") or (
+                    status not in ("COMPLETED", "CANCELLED")
+                    and bool(pid)
+                    and (self._is_pid_alive(pid, start_time) or self._is_pgid_alive(pid))
+                )
+                if is_active:
                     if backend == "local_background" and pid:
-                        try:
-                            curr_pgid = os.getpgrp()
-                            pgid = os.getpgid(pid)
-                            if pgid != curr_pgid:
-                                os.killpg(pgid, signal.SIGTERM)
-                                time.sleep(0.3)
-                                try:
-                                    os.killpg(pgid, signal.SIGKILL)
-                                except ProcessLookupError:
-                                    pass
-                                action_taken = f"Terminated process group {pgid} (PID {pid})"
-                            else:
-                                os.kill(pid, signal.SIGTERM)
-                                time.sleep(0.3)
-                                try:
-                                    os.kill(pid, signal.SIGKILL)
-                                except ProcessLookupError:
-                                    pass
-                                action_taken = f"Terminated PID {pid}"
-                        except Exception:
+                        if start_time is not None and not self._is_pid_alive(pid, start_time):
+                            action_taken = f"PID {pid} not alive with recorded start time (PID recycled/exited)"
+                        else:
                             try:
-                                os.kill(pid, signal.SIGKILL)
-                                action_taken = f"Killed PID {pid}"
+                                curr_pgid = os.getpgrp()
+                                try:
+                                    pgid = os.getpgid(pid)
+                                except Exception:
+                                    pgid = pid
+                                if pgid and pgid != curr_pgid:
+                                    try:
+                                        os.killpg(pgid, signal.SIGTERM)
+                                    except ProcessLookupError:
+                                        pass
+                                    time.sleep(0.3)
+                                    try:
+                                        os.killpg(pgid, signal.SIGKILL)
+                                    except ProcessLookupError:
+                                        pass
+                                    action_taken = f"Terminated process group {pgid} (PID {pid})"
+                                else:
+                                    try:
+                                        os.kill(pid, signal.SIGTERM)
+                                    except ProcessLookupError:
+                                        pass
+                                    time.sleep(0.3)
+                                    try:
+                                        os.kill(pid, signal.SIGKILL)
+                                    except ProcessLookupError:
+                                        pass
+                                    action_taken = f"Terminated PID {pid}"
                             except Exception as e:
                                 action_taken = f"Kill error: {e}"
+                                try:
+                                    os.kill(pid, signal.SIGKILL)
+                                    action_taken = f"Killed PID {pid}"
+                                except Exception as e:
+                                    action_taken = f"Kill error: {e}"
                     elif backend == "slurm" and job_id:
                         subprocess.run(["scancel", str(job_id)], check=False)
                         action_taken = f"Scancelled SLURM job {job_id}"
@@ -651,7 +748,7 @@ class TaskManager:
         records = []
         if self.tasks_dir.exists():
             for task_folder in sorted(self.tasks_dir.iterdir()):
-                if task_folder.is_dir():
+                if task_folder.is_dir() and task_folder.name != "tasks" and not task_folder.name.startswith("."):
                     info = self.get_task_info(task_folder.name)
                     submit_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(info.get("submit_time", 0))) if "submit_time" in info else "-"
                     elapsed = info.get("elapsed_sec")

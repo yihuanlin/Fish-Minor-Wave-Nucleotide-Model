@@ -422,6 +422,14 @@ def check_file_integrity(
     if not p.exists():
         return False, "File does not exist"
 
+    # Incomplete download check: if .aria2 or .part file exists, file is incomplete
+    if (
+        Path(str(p) + ".aria2").exists() or
+        p.with_suffix(p.suffix + ".part").exists() or
+        Path(str(p) + ".part.aria2").exists()
+    ):
+        return False, "Incomplete download (.aria2 or .part file exists)"
+
     sz = p.stat().st_size
     if sz < min_size_bytes:
         return False, f"File too small ({sz} < {min_size_bytes} bytes)"
@@ -604,7 +612,8 @@ def download_file_with_progress(
     min_size_bytes: int = 1024,
     progress_callback: Optional[Any] = None,
     retries: Optional[int] = None,
-    use_aria2: bool = True
+    use_aria2: bool = True,
+    verify_full: bool = False
 ) -> Path:
     """
     Download a file with checkpointing, real-time progress logging, and integrity check.
@@ -617,7 +626,7 @@ def download_file_with_progress(
     file_label = label or dest.name
 
     # 1. Pre-download check: Skip if already valid
-    is_valid, msg = check_file_integrity(dest, min_size_bytes=min_size_bytes, fast=True)
+    is_valid, msg = check_file_integrity(dest, min_size_bytes=min_size_bytes, fast=not verify_full)
     if is_valid:
         size_mb = dest.stat().st_size / (1024 * 1024)
         print(f"[SKIP] Resource already exists & verified intact: {dest.name} ({size_mb:.1f} MB)", flush=True)
@@ -667,7 +676,7 @@ def download_file_with_progress(
                 cmd = [
                     aria2c_path,
                     "-U", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-                    "-s", "1", "-x", "1", "-j", "1", "-c",
+                    "-s", "16", "-x", "16", "-j", "1", "-c",
                     "--auto-file-renaming=false",
                     "--allow-overwrite=true",
                     "--lowest-speed-limit=20K",
@@ -785,7 +794,8 @@ def download_domain_worker(
     domain: str,
     tasks: List[DownloadTask],
     tracker: MultiDomainProgressTracker,
-    retries: Optional[int] = None
+    retries: Optional[int] = None,
+    verify_full: bool = False
 ) -> None:
     """Serial worker dedicated to a single host domain."""
     print(f"[DOMAIN WORKER START] Host: {domain} ({len(tasks)} file(s))", flush=True)
@@ -801,7 +811,8 @@ def download_domain_worker(
                 label=t.label,
                 min_size_bytes=t.min_size_bytes,
                 progress_callback=cb,
-                retries=retries
+                retries=retries,
+                verify_full=verify_full
             )
             tracker.mark_task_complete(domain, t.label)
         except Exception as e:
@@ -832,7 +843,8 @@ def check_resource_status(
     atac_accessions_medaka: Optional[List[str]] = None,
     slam_accessions: Optional[List[str]] = None,
     use_pretrained_bias: bool = False,
-    write_manifests: bool = True
+    write_manifests: bool = True,
+    verify_full: bool = False
 ) -> Tuple[pd.DataFrame, bool, List[DownloadTask]]:
     """Audit all study resources and compile pending download tasks."""
     work_dir = Path(work_dir).resolve()
@@ -847,13 +859,15 @@ def check_resource_status(
     atac_med_dir = work_dir / "atac" / "Oryzias_latipes" / "fastqs"
     atac_med_dir.mkdir(parents=True, exist_ok=True)
 
+    fast_check = not verify_full
+
     records: List[Dict[str, Any]] = []
     pending_tasks: List[DownloadTask] = []
 
     # 1. Target Species FASTA & GTF
     if target_fa:
         t_fa_p = Path(target_fa).resolve()
-        valid, msg = check_file_integrity(t_fa_p, min_size_bytes=100 * 1024 * 1024)
+        valid, msg = check_file_integrity(t_fa_p, min_size_bytes=100 * 1024 * 1024, fast=fast_check)
         if valid:
             records.append({
                 "Resource": f"{target_species or 'Target'} Genome FASTA",
@@ -863,7 +877,7 @@ def check_resource_status(
             })
         else:
             t_fa_gz = t_fa_p.with_suffix(t_fa_p.suffix + ".gz") if not str(t_fa_p).endswith(".gz") else t_fa_p
-            v_gz, _ = check_file_integrity(t_fa_gz, min_size_bytes=100 * 1024 * 1024)
+            v_gz, _ = check_file_integrity(t_fa_gz, min_size_bytes=100 * 1024 * 1024, fast=fast_check)
             if v_gz:
                 records.append({
                     "Resource": f"{target_species or 'Target'} Genome FASTA",
@@ -897,7 +911,7 @@ def check_resource_status(
 
     if target_gtf:
         t_gtf_p = Path(target_gtf).resolve()
-        valid, msg = check_file_integrity(t_gtf_p, min_size_bytes=10 * 1024 * 1024)
+        valid, msg = check_file_integrity(t_gtf_p, min_size_bytes=10 * 1024 * 1024, fast=fast_check)
         if valid:
             records.append({
                 "Resource": f"{target_species or 'Target'} GTF",
@@ -932,7 +946,7 @@ def check_resource_status(
     zf_fa_dest = Path(zf_fa).resolve() if zf_fa else downloads_dir / "Danio_rerio.GRCz11.dna_sm.primary_assembly.fa"
     zf_fa_gz = zf_fa_dest.with_suffix(zf_fa_dest.suffix + ".gz")
 
-    v_fa, _ = check_file_integrity(zf_fa_dest, min_size_bytes=800 * 1024 * 1024)
+    v_fa, _ = check_file_integrity(zf_fa_dest, min_size_bytes=800 * 1024 * 1024, fast=fast_check)
     if v_fa:
         records.append({
             "Resource": "Zebrafish Genome FASTA",
@@ -941,7 +955,7 @@ def check_resource_status(
             "Status": "VERIFIED"
         })
     else:
-        v_gz, _ = check_file_integrity(zf_fa_gz, min_size_bytes=350 * 1024 * 1024)
+        v_gz, _ = check_file_integrity(zf_fa_gz, min_size_bytes=350 * 1024 * 1024, fast=fast_check)
         if v_gz:
             records.append({
                 "Resource": "Zebrafish Genome FASTA",
@@ -967,7 +981,7 @@ def check_resource_status(
             ))
 
     zf_gtf_dest = Path(zf_gtf).resolve() if zf_gtf else downloads_dir / "Danio_rerio.GRCz11.112.gtf.gz"
-    v_gtf, _ = check_file_integrity(zf_gtf_dest, min_size_bytes=10 * 1024 * 1024)
+    v_gtf, _ = check_file_integrity(zf_gtf_dest, min_size_bytes=10 * 1024 * 1024, fast=fast_check)
     if v_gtf:
         records.append({
             "Resource": "Zebrafish GTF",
@@ -996,7 +1010,7 @@ def check_resource_status(
         med_fa_dest = Path(medaka_fa).resolve() if medaka_fa else downloads_dir / "Oryzias_latipes.ASM223467v1.dna_sm.toplevel.fa"
         med_fa_gz = med_fa_dest.with_suffix(med_fa_dest.suffix + ".gz")
 
-        v_mfa, _ = check_file_integrity(med_fa_dest, min_size_bytes=300 * 1024 * 1024)
+        v_mfa, _ = check_file_integrity(med_fa_dest, min_size_bytes=300 * 1024 * 1024, fast=fast_check)
         if v_mfa:
             records.append({
                 "Resource": "Medaka Genome FASTA",
@@ -1005,7 +1019,7 @@ def check_resource_status(
                 "Status": "VERIFIED"
             })
         else:
-            v_mgz, _ = check_file_integrity(med_fa_gz, min_size_bytes=150 * 1024 * 1024)
+            v_mgz, _ = check_file_integrity(med_fa_gz, min_size_bytes=150 * 1024 * 1024, fast=fast_check)
             if v_mgz:
                 records.append({
                     "Resource": "Medaka Genome FASTA",
@@ -1031,7 +1045,7 @@ def check_resource_status(
                 ))
 
         med_gtf_dest = Path(medaka_gtf).resolve() if medaka_gtf else downloads_dir / "Oryzias_latipes.ASM223467v1.112.gtf.gz"
-        v_mgtf, _ = check_file_integrity(med_gtf_dest, min_size_bytes=10 * 1024 * 1024)
+        v_mgtf, _ = check_file_integrity(med_gtf_dest, min_size_bytes=10 * 1024 * 1024, fast=fast_check)
         if v_mgtf:
             records.append({
                 "Resource": "Medaka GTF",
@@ -1057,7 +1071,7 @@ def check_resource_status(
 
     # 4. JASPAR 2024 CORE Database
     jaspar_dest = Path(jaspar_meme_path).resolve() if jaspar_meme_path else downloads_dir / "JASPAR2024_CORE_vertebrates_non-redundant.meme"
-    v_j, _ = check_file_integrity(jaspar_dest, min_size_bytes=100 * 1024)
+    v_j, _ = check_file_integrity(jaspar_dest, min_size_bytes=100 * 1024, fast=fast_check)
     if v_j:
         records.append({
             "Resource": "JASPAR 2024 CORE Database",
@@ -1083,7 +1097,7 @@ def check_resource_status(
 
     # Pre-MZT TF MEME Subset
     filtered_meme_dest = downloads_dir / "premzt_tfs.meme"
-    v_filt, _ = check_file_integrity(filtered_meme_dest, min_size_bytes=1024)
+    v_filt, _ = check_file_integrity(filtered_meme_dest, min_size_bytes=1024, fast=fast_check)
     records.append({
         "Resource": "Pre-MZT TF Motifs",
         "Path": str(filtered_meme_dest),
@@ -1093,7 +1107,7 @@ def check_resource_status(
 
     # Target <-> Zebrafish Ortholog Map
     ortho_dest = Path(ortholog_map_path).resolve() if ortholog_map_path else downloads_dir / "orthologs_target_to_zf.tsv"
-    v_ortho, _ = check_file_integrity(ortho_dest, min_size_bytes=10 * 1024)
+    v_ortho, _ = check_file_integrity(ortho_dest, min_size_bytes=10 * 1024, fast=fast_check)
     records.append({
         "Resource": "Target <-> Zebrafish Ortholog Map",
         "Path": str(ortho_dest),
@@ -1110,7 +1124,7 @@ def check_resource_status(
         for url in r_info["urls"]:
             fn = Path(url).name
             dest_fq = atac_zf_dir / fn
-            v_fq, _ = check_file_integrity(dest_fq, min_size_bytes=10 * 1024 * 1024)
+            v_fq, _ = check_file_integrity(dest_fq, min_size_bytes=10 * 1024 * 1024, fast=fast_check)
             if v_fq:
                 records.append({
                     "Resource": f"Zebrafish ATAC FASTQ ({run_id})",
@@ -1144,7 +1158,7 @@ def check_resource_status(
             for url in r_info["urls"]:
                 fn = Path(url).name
                 dest_fq = atac_med_dir / fn
-                v_fq, _ = check_file_integrity(dest_fq, min_size_bytes=10 * 1024 * 1024)
+                v_fq, _ = check_file_integrity(dest_fq, min_size_bytes=10 * 1024 * 1024, fast=fast_check)
                 if v_fq:
                     records.append({
                         "Resource": f"Medaka ATAC FASTQ ({run_id})",
@@ -1185,7 +1199,7 @@ def check_resource_status(
             for url in r_info["urls"]:
                 fn = Path(url).name
                 dest_fq = fastqs_dir / fn
-                v_fq, _ = check_file_integrity(dest_fq, min_size_bytes=10 * 1024 * 1024)
+                v_fq, _ = check_file_integrity(dest_fq, min_size_bytes=10 * 1024 * 1024, fast=fast_check)
                 if v_fq:
                     records.append({
                         "Resource": f"SLAM-seq FASTQ ({run_id})",
@@ -1214,7 +1228,7 @@ def check_resource_status(
         bias_models_dir = downloads_dir / "bias_models"
         bias_dest = bias_models_dir / "atac_bias.h5"
         bias_zip = downloads_dir / "bias_models.zip"
-        v_b, _ = check_file_integrity(bias_dest, min_size_bytes=100 * 1024)
+        v_b, _ = check_file_integrity(bias_dest, min_size_bytes=100 * 1024, fast=fast_check)
         if v_b:
             records.append({
                 "Resource": "Pretrained Tn5 Bias Model",
@@ -1353,7 +1367,8 @@ def download_all_resources(
     max_per_host_workers: int = 2,
     max_retries: Optional[int] = None,
     task_name: str = "download_resources",
-    task_manager: Optional[Any] = None
+    task_manager: Optional[Any] = None,
+    verify_full: bool = False
 ) -> pd.DataFrame:
     """
     Consolidated download manager:
@@ -1406,7 +1421,8 @@ def download_all_resources(
         atac_accessions_medaka=atac_accessions_medaka,
         slam_accessions=slam_accessions,
         use_pretrained_bias=use_pretrained_bias,
-        write_manifests=False
+        write_manifests=False,
+        verify_full=verify_full
     )
 
     if not pending_tasks:
@@ -1440,7 +1456,7 @@ def download_all_resources(
 
         with ThreadPoolExecutor(max_workers=n_workers) as pool:
             futures = {
-                pool.submit(download_domain_worker, dom, tasks, tracker, max_retries): dom
+                pool.submit(download_domain_worker, dom, tasks, tracker, max_retries, verify_full): dom
                 for dom, tasks in domain_queues.items()
             }
             for fut in as_completed(futures):
@@ -1456,6 +1472,22 @@ def download_all_resources(
     # --------------------------------------------------------------------------
     # 2. Post-Download Derivative Extractions & Preparations
     # --------------------------------------------------------------------------
+    def _decompress_and_index_fasta(fa_gz: Path, fa_dest: Path, desc: str = ""):
+        """Atomically decompress .fa.gz to .fa via .fa.tmp and index with samtools faidx."""
+        fa_tmp = fa_dest.with_suffix(".fa.tmp")
+        fa_tmp.unlink(missing_ok=True)
+        try:
+            res = subprocess.run(f"gzip -dc '{fa_gz}' > '{fa_tmp}'", shell=True, check=False)
+            if res.returncode != 0:
+                raise RuntimeError(f"gzip -dc failed on {fa_gz} with exit code {res.returncode}")
+            os.replace(str(fa_tmp), str(fa_dest))
+            subprocess.run(["samtools", "faidx", str(fa_dest)], check=True)
+        except Exception as e:
+            fa_tmp.unlink(missing_ok=True)
+            raise RuntimeError(f"Failed decompressing {fa_gz.name} -> {fa_dest.name}: {e}") from e
+        finally:
+            fa_tmp.unlink(missing_ok=True)
+
     # Target FASTA decompression & indexing if needed
     if target_fa:
         t_fa_dest = Path(target_fa).resolve()
@@ -1463,8 +1495,7 @@ def download_all_resources(
         if not check_file_integrity(t_fa_dest, 100 * 1024 * 1024)[0] and t_fa_gz.exists():
             print(f"[*] Decompressing {t_fa_gz.name} -> {t_fa_dest.name}...", flush=True)
             set_task_progress(work_dir_p, task_name, f"Decompressing {t_fa_dest.name}")
-            subprocess.run(f"gzip -dc '{t_fa_gz}' > '{t_fa_dest}'", shell=True, check=True)
-            subprocess.run(["samtools", "faidx", str(t_fa_dest)], check=True)
+            _decompress_and_index_fasta(t_fa_gz, t_fa_dest, desc=f"Decompressing {t_fa_dest.name}")
 
     # Zebrafish FASTA decompression & indexing if needed
     zf_fa_dest = Path(zf_fa).resolve() if zf_fa else downloads_dir / "Danio_rerio.GRCz11.dna_sm.primary_assembly.fa"
@@ -1472,8 +1503,7 @@ def download_all_resources(
     if not check_file_integrity(zf_fa_dest, 500 * 1024 * 1024)[0] and zf_fa_gz.exists():
         print(f"[*] Decompressing {zf_fa_gz.name} -> {zf_fa_dest.name}...", flush=True)
         set_task_progress(work_dir_p, task_name, "Decompressing Zebrafish FASTA")
-        subprocess.run(f"gzip -dc '{zf_fa_gz}' > '{zf_fa_dest}'", shell=True, check=True)
-        subprocess.run(["samtools", "faidx", str(zf_fa_dest)], check=True)
+        _decompress_and_index_fasta(zf_fa_gz, zf_fa_dest, desc="Decompressing Zebrafish FASTA")
 
     # Medaka FASTA decompression & indexing if needed
     if enable_medaka:
@@ -1482,8 +1512,7 @@ def download_all_resources(
         if not check_file_integrity(med_fa_dest, 300 * 1024 * 1024)[0] and med_fa_gz.exists():
             print(f"[*] Decompressing {med_fa_gz.name} -> {med_fa_dest.name}...", flush=True)
             set_task_progress(work_dir_p, task_name, "Decompressing Medaka FASTA")
-            subprocess.run(f"gzip -dc '{med_fa_gz}' > '{med_fa_dest}'", shell=True, check=True)
-            subprocess.run(["samtools", "faidx", str(med_fa_dest)], check=True)
+            _decompress_and_index_fasta(med_fa_gz, med_fa_dest, desc="Decompressing Medaka FASTA")
 
     # Pre-MZT TF MEME Subset filter
     jaspar_dest = Path(jaspar_meme_path).resolve() if jaspar_meme_path else downloads_dir / "JASPAR2024_CORE_vertebrates_non-redundant.meme"
@@ -1625,7 +1654,8 @@ def download_all_resources(
         atac_accessions_medaka=atac_accessions_medaka,
         slam_accessions=slam_accessions,
         use_pretrained_bias=use_pretrained_bias,
-        write_manifests=False
+        write_manifests=False,
+        verify_full=verify_full
     )
 
     manifest_tsv = downloads_dir / "resource_manifest.tsv"
@@ -1685,6 +1715,7 @@ def main():
     parser.add_argument("--max-host-workers", type=int, default=3, help="Max distinct host domains in parallel")
     parser.add_argument("--max-per-host-workers", type=int, default=2, help="Max parallel download workers per host (e.g. EBI)")
     parser.add_argument("--max-retries", type=int, default=0, help="Max download retries (0 or None = infinite)")
+    parser.add_argument("--verify-full", action="store_true", help="Pass fast=False to check_file_integrity for full gzip -t verification across all existing archives")
     args = parser.parse_args()
 
     work_dir = Path(args.work_dir).resolve()
@@ -1742,7 +1773,8 @@ def main():
         atac_accessions_zf=zf_atac_cfg,
         atac_accessions_medaka=med_atac_cfg,
         slam_accessions=slam_cfg,
-        use_pretrained_bias=use_pretrained_bias
+        use_pretrained_bias=use_pretrained_bias,
+        verify_full=args.verify_full
     )
 
 

@@ -64,22 +64,137 @@ def get_crop_bounds(context_len: int, crop_ratio: float = 0.375) -> Tuple[int, i
     return start, end
 
 
+def sanitize_for_torch_save(obj: Any) -> Any:
+    """Recursively convert numpy/pandas/custom objects to pure Python primitives for PyTorch 2.6+ weights_only=True."""
+    if obj is None:
+        return None
+    if isinstance(obj, (int, float, str, bool, bytes)):
+        return obj
+    if isinstance(obj, torch.Tensor):
+        return obj.detach().cpu()
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        return float(obj)
+    if isinstance(obj, np.bool_):
+        return bool(obj)
+    if isinstance(obj, np.ndarray):
+        return [sanitize_for_torch_save(x) for x in obj.tolist()]
+    if isinstance(obj, dict):
+        return {str(k): sanitize_for_torch_save(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [sanitize_for_torch_save(x) for x in obj]
+    if isinstance(obj, (set, frozenset)):
+        return [sanitize_for_torch_save(x) for x in sorted(list(obj))]
+    if hasattr(obj, "__dict__"):
+        return sanitize_for_torch_save(vars(obj))
+    return str(obj)
+
+
+def get_ntv3_input_embedding_layer(model: nn.Module) -> nn.Module:
+    """
+    Resolves NTv3Tracks's real input embedding submodule reliably (raising a loud RuntimeError if not found)
+    for both LoRA gradient enabling and Block 8 saliency hooks.
+    """
+    m = model
+    if hasattr(m, "trunk"):
+        m = m.trunk
+    if hasattr(m, "get_base_model"):
+        m = m.get_base_model()
+    if hasattr(m, "model") and hasattr(m.model, "embed_layer"):
+        return m.model.embed_layer
+    if hasattr(m, "embed_layer"):
+        return m.embed_layer
+    for name, sub in m.named_modules():
+        if "embed_layer" in name and isinstance(sub, nn.Embedding):
+            return sub
+    raise RuntimeError(f"[FATAL] Could not locate NTv3 input embedding layer in model of type {type(model)}.")
+
+
+def apply_ntv3_activation_checkpointing(base_model: nn.Module):
+    """
+    Implement manual activation checkpointing (use_reentrant=False) around NTv3Tracks's
+    Transformer blocks and U-Net decoder blocks to prevent VRAM spikes on 16 GB GPUs.
+    """
+    import torch.utils.checkpoint as checkpoint
+    inner = base_model.model if hasattr(base_model, "model") else base_model
+    mod = sys.modules.get(type(inner).__module__)
+    if mod is None or not hasattr(mod, "_NTv3Backbone"):
+        return
+
+    def checkpointed_backbone_forward(self, tokens, conditions=None, conditions_masks=None, stop_after_transformer=False, skip_lm_head=True):
+        seq_len = tokens.shape[1]
+        downsampling = self.config.total_downsampling
+        if seq_len % downsampling != 0:
+            raise ValueError(f"sequence length {seq_len} is not a multiple of {downsampling}")
+
+        outs: dict[str, torch.Tensor] = {}
+        intermediates: dict[int, torch.Tensor] = {}
+
+        x = self.embed_layer(tokens)
+        x = self.stem(x)
+        intermediates[1] = x
+        x = mod.max_pool(x, 2)
+
+        for index, block in enumerate(self.encoder_blocks):
+            x = block(x)
+            intermediates[2 ** (index + 1)] = x
+            x = mod.max_pool(x, 2)
+
+        outs["before_transformer_embedding"] = x
+        attention_mask = self.block_attention_mask(tokens)
+
+        for index in range(self.config.num_layers):
+            mha = self.mha_blocks[index]
+            mlp = self.mlp_blocks[index]
+            def create_custom_forward(mha_b, mlp_b):
+                def custom_forward(h):
+                    h1 = h + mha_b(h, attention_mask=attention_mask, conditions=conditions, conditions_masks=conditions_masks)
+                    return h1 + mlp_b(h1, conditions, conditions_masks)
+                return custom_forward
+            x = checkpoint.checkpoint(create_custom_forward(mha, mlp), x, use_reentrant=False)
+
+        x = self.final_norm(x)
+        outs["after_transformer_embedding"] = x
+        if stop_after_transformer:
+            return outs
+
+        for index, block in enumerate(self.decoder_blocks):
+            bin_size = 2 ** (self.config.num_downsamples - index)
+            def create_dec_forward(dec_b, inter):
+                def dec_forward(h):
+                    return dec_b(h, inter, conditions, conditions_masks)
+                return dec_forward
+            x = checkpoint.checkpoint(create_dec_forward(block, intermediates[bin_size]), x, use_reentrant=False)
+
+        if not skip_lm_head and hasattr(self, "lm_head"):
+            outs["logits"] = self.lm_head(x)
+        outs["embedding"] = x
+        return outs
+
+    mod._NTv3Backbone.forward = checkpointed_backbone_forward
+    print("[+] Enabled manual activation checkpointing (use_reentrant=False) on NTv3 Transformer and U-Net blocks.")
+
+
 def find_target_lora_modules(model: nn.Module) -> List[str]:
-    """Find attention projection module names dynamically from model architecture, excluding output heads."""
+    """
+    Find attention projection module names dynamically based on NTv3Tracks actual Transformer linear layer names,
+    targeting attention Q/K/V/O (q_layer, k_layer, v_layer, linear_embedding) while strictly excluding output heads.
+    """
     target_names = set()
-    exclude_keywords = ["head", "bigwig", "bed", "lm_head", "classifier", "track"]
+    exclude_keywords = ["head", "bigwig", "bed_head", "bed_tracks", "lm_head", "classifier", "track_bias", "pointwise_unet_skip", "stem", "encoder", "decoder"]
     for name, module in model.named_modules():
         if any(ex in name.lower() for ex in exclude_keywords):
             continue
         if isinstance(module, nn.Linear):
             parts = name.split(".")
             leaf = parts[-1]
-            if any(ex in leaf.lower() for ex in exclude_keywords):
+            if any(ex in leaf.lower() for ex in ["head", "bigwig", "bed_head", "lm_head", "classifier"]):
                 continue
-            if any(k in leaf.lower() for k in ["query", "key", "value", "q_proj", "k_proj", "v_proj", "out_proj", "qkv", "proj", "dense"]):
+            if "mha_blocks" in name and leaf in ["q_layer", "k_layer", "v_layer", "linear_embedding"]:
                 target_names.add(leaf)
     if not target_names:
-        target_names = {"query", "value"}
+        target_names = {"q_layer", "k_layer", "v_layer", "linear_embedding"}
     return sorted(list(target_names))
 
 
@@ -118,25 +233,36 @@ class NTv3TrackHead(nn.Module):
 
         self.accepts_track_indices = ("track_indices" in sig.parameters) or (base_sig is not None and "track_indices" in base_sig.parameters)
         self.accepts_species_ids = ("species_ids" in sig.parameters) or (base_sig is not None and "species_ids" in base_sig.parameters)
+        self.accepts_conditions_tokens = ("conditions_tokens" in sig.parameters) or (base_sig is not None and "conditions_tokens" in base_sig.parameters)
         self.accepts_attention_mask = ("attention_mask" in sig.parameters) or (base_sig is not None and "attention_mask" in base_sig.parameters)
         self.accepts_output_hidden_states = ("output_hidden_states" in sig.parameters) or (base_sig is not None and "output_hidden_states" in base_sig.parameters)
+        self.accepts_skip_lm_head = ("skip_lm_head" in sig.parameters) or (base_sig is not None and "skip_lm_head" in base_sig.parameters) or ("kwargs" in str(sig))
 
     def forward(
         self,
         input_ids: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
-        species_ids: Optional[torch.Tensor] = None
+        species_ids: Optional[torch.Tensor] = None,
+        conditions_tokens: Optional[List[torch.Tensor]] = None
     ) -> torch.Tensor:
         kwargs = {}
-        if self.accepts_species_ids:
-            if species_ids is None:
-                species_ids = torch.full((input_ids.shape[0],), self.default_species_id, dtype=torch.long, device=input_ids.device)
+        if species_ids is None and conditions_tokens is not None and len(conditions_tokens) > 0:
+            species_ids = conditions_tokens[0]
+
+        if species_ids is None:
+            species_ids = torch.full((input_ids.shape[0],), self.default_species_id, dtype=torch.long, device=input_ids.device)
+
+        if self.accepts_conditions_tokens:
+            kwargs["conditions_tokens"] = [species_ids]
+        elif self.accepts_species_ids:
             kwargs["species_ids"] = species_ids
+
         if self.accepts_attention_mask and attention_mask is not None:
             kwargs["attention_mask"] = attention_mask
-        # Guard: Do not pass track_indices=[] as empty list can cause empty-tensor indexing errors in NTv3 track heads
         if self.accepts_output_hidden_states:
             kwargs["output_hidden_states"] = True
+        if self.accepts_skip_lm_head:
+            kwargs["skip_lm_head"] = True
 
         out = self.trunk(input_ids=input_ids, **kwargs)
 
@@ -375,60 +501,51 @@ def build_ntv3_model(
             model_id,
             trust_remote_code=True,
             token=token,
-            torch_dtype=torch_dtype
+            dtype=torch_dtype
+        )
+    except TypeError:
+        base_model = AutoModel.from_pretrained(
+            model_id,
+            trust_remote_code=True,
+            token=token
         )
     except Exception as e:
         print(f"[FATAL] Failed to load foundation model {model_id}: {e}", file=sys.stderr)
         sys.exit(1)
 
-    if grad_checkpointing and hasattr(base_model, "gradient_checkpointing_enable"):
-        if train_mode == "lora":
-            if hasattr(base_model, "enable_input_require_grads"):
-                try:
-                    base_model.enable_input_require_grads()
-                    print("[+] Enabled input require grads on base model for LoRA + gradient checkpointing.")
-                except Exception as e_req:
-                    print(f"[-] Notice enable_input_require_grads: {e_req}")
-            elif hasattr(base_model, "get_input_embeddings"):
-                emb = base_model.get_input_embeddings()
-                if emb is not None:
-                    emb.register_forward_hook(lambda module, input, output: output.requires_grad_(True))
+    # 1. Eliminate VRAM waste by deleting unused 7,362-channel BigWig and MLM heads during custom-head training
+    if train_mode != "raw_baseline":
+        inner = base_model.model if hasattr(base_model, "model") else base_model
+        if hasattr(inner, "bigwig_head"):
+            delattr(inner, "bigwig_head")
+            print("[+] Bypassed/removed unused 7,362-channel pretrained bigwig_head to eliminate VRAM waste.")
+        if hasattr(inner, "lm_head"):
+            delattr(inner, "lm_head")
+            print("[+] Bypassed/removed unused pretrained lm_head to eliminate VRAM waste.")
 
-        try:
-            base_model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
-            print("[+] Gradient checkpointing enabled (use_reentrant=False) for VRAM safety.")
-        except TypeError:
+    # 2. Genuine activation checkpointing on NTv3 Transformer and U-Net blocks
+    if grad_checkpointing:
+        apply_ntv3_activation_checkpointing(base_model)
+        if hasattr(base_model, "gradient_checkpointing_enable"):
             try:
-                base_model.gradient_checkpointing_enable()
-                print("[+] Gradient checkpointing enabled for VRAM safety.")
-            except Exception as e:
-                print(f"[-] Notice: could not enable gradient checkpointing: {e}")
-        except Exception as e:
-            print(f"[-] Notice: could not enable gradient checkpointing: {e}")
-
-    embed_dim = None
-    for attr in ["hidden_size", "d_model", "dim", "embedding_dim", "embed_dim"]:
-        if hasattr(base_model.config, attr):
-            embed_dim = getattr(base_model.config, attr)
-            break
-    if embed_dim is None:
-        dummy_in = torch.zeros((1, min(128, context_len)), dtype=torch.long)
-        with torch.no_grad():
-            try:
-                dummy_out = base_model(dummy_in)
+                base_model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
             except Exception:
-                try:
-                    dummy_out = base_model(dummy_in, track_indices=[0])
-                except Exception:
-                    dummy_out = None
-            if dummy_out is not None and hasattr(dummy_out, "embedding") and dummy_out.embedding is not None:
-                embed_dim = dummy_out.embedding.shape[-1]
-            elif dummy_out is not None and hasattr(dummy_out, "last_hidden_state") and dummy_out.last_hidden_state is not None:
-                embed_dim = dummy_out.last_hidden_state.shape[-1]
-            elif isinstance(dummy_out, (tuple, list)):
-                embed_dim = dummy_out[0].shape[-1]
-            else:
-                embed_dim = 1024
+                pass
+
+    # 3. Input embedding layer hook for LoRA gradient flow
+    if train_mode == "lora":
+        emb_layer = get_ntv3_input_embedding_layer(base_model)
+        emb_layer.register_forward_hook(lambda module, input, output: output.requires_grad_(True))
+        print("[+] Attached forward hook on NTv3 input embedding layer setting output.requires_grad_(True).")
+
+    # Determine decoder feature embedding dimension (1024 for NTv3 decoder output)
+    embed_dim = 1024
+    if hasattr(base_model, "model") and hasattr(base_model.model, "config"):
+        embed_dim = getattr(base_model.model.config, "conv_init_embed_dim", 1024)
+    elif hasattr(base_model.config, "conv_init_embed_dim"):
+        embed_dim = getattr(base_model.config, "conv_init_embed_dim", 1024)
+    elif hasattr(base_model.config, "hidden_size"):
+        embed_dim = getattr(base_model.config, "hidden_size")
 
     if train_mode == "lora":
         target_modules = find_target_lora_modules(base_model)
@@ -510,7 +627,7 @@ def sample_stratified_windows(
     zf_targets = work_dir / "atac" / "Danio_rerio" / "Danio_rerio_summit_targets.tsv"
 
     if zf_targets.exists():
-        df_zf = pd.read_csv(zf_targets, sep="\t")
+        df_zf = pd.read_csv(zf_targets, sep="\t", dtype={"chrom": str}, low_memory=False)
         df_filt = df_zf[~df_zf.get("is_repeat_downweight", False)]
         df_filt = df_filt[df_filt["chrom"].astype(str).isin(allowed_chroms)]
 
@@ -774,7 +891,7 @@ def run_baselines_benchmark(
     # Load test split summits strictly (filtered by chr_fold_json["test"], excluding miR-430 and repeats)
     df_test = pd.DataFrame()
     if zf_targets_path.exists():
-        df_zf = pd.read_csv(zf_targets_path, sep="\t")
+        df_zf = pd.read_csv(zf_targets_path, sep="\t", dtype={"chrom": str}, low_memory=False)
         test_chroms = None
         if chr_fold_json and Path(chr_fold_json).exists():
             try:
@@ -1104,7 +1221,7 @@ def run_baselines_benchmark(
             try:
                 from pyfaidx import Fasta
                 m_fa = Fasta(str(medaka_genome_fa), as_raw=True)
-                df_med_raw = pd.read_csv(medaka_targets, sep="\t")
+                df_med_raw = pd.read_csv(medaka_targets, sep="\t", dtype={"chrom": str}, low_memory=False)
                 df_med = df_med_raw.sample(n=min(120, len(df_med_raw)), random_state=42).reset_index(drop=True)
                 m_scores = []
                 for _, mr in df_med.iterrows():
@@ -1165,10 +1282,12 @@ def run_baselines_benchmark(
                     genes_to_score = genes_to_score.drop_duplicates(subset=["gene_id"])
                 genes_to_score = genes_to_score.reset_index(drop=True)
 
-                g_scores = []
+                g_scores_atac = []
+                g_scores_slam = []
                 for _, gr in genes_to_score.iterrows():
                     g_c = str(gr["chrom"])
                     g_tss = int(gr.get("tss", gr.get("start", 0)))
+                    g_strand = str(gr.get("strand", "+"))
                     c_sz = len(t_fa[g_c]) if g_c in t_fa else 100000000
                     w_st = max(0, g_tss - context_len // 2)
                     w_en = w_st + context_len
@@ -1183,22 +1302,36 @@ def run_baselines_benchmark(
                     if len(g_seq) < context_len:
                         g_seq += "N" * (context_len - len(g_seq))
                     enc_g = eval_tok(g_seq, add_special_tokens=False, return_tensors="pt", max_length=context_len, truncation=True, padding="max_length")
-                    with torch.amp.autocast(device_type=device.type, dtype=autocast_dtype):
-                        p_g = eval_model(
-                            input_ids=enc_g["input_ids"].to(device),
-                            species_ids=torch.full((enc_g["input_ids"].shape[0],), resolved_species_id, dtype=torch.long, device=device)
-                        )
+                    with torch.no_grad():
+                        with torch.amp.autocast(device_type=device.type, dtype=autocast_dtype):
+                            p_g = eval_model(
+                                input_ids=enc_g["input_ids"].to(device),
+                                species_ids=torch.full((enc_g["input_ids"].shape[0],), resolved_species_id, dtype=torch.long, device=device)
+                            )
                     p_g_np = p_g.cpu().float().numpy()
                     # Score max predicted atac_256cell across full central 37.5% crop (~24.6 kb)
-                    g_scores.append(float(np.max(p_g_np[0, :, idx_early])))
+                    g_scores_atac.append(float(np.max(p_g_np[0, :, idx_early])))
+
+                    # Score strand-matched slam_2.5hpf 3'-end signal
+                    if idx_slam_fwd is not None and idx_slam_rev is not None:
+                        idx_sl = idx_slam_fwd if g_strand == "+" else idx_slam_rev
+                        g_scores_slam.append(float(np.max(p_g_np[0, :, idx_sl])))
 
                 genes_to_score = genes_to_score.copy()
-                genes_to_score["pred_max_y_abs"] = g_scores
+                genes_to_score["pred_max_y_abs"] = g_scores_atac
                 from scripts.infer_and_attribute import benchmark_transfer_metrics
                 m_st_nt = benchmark_transfer_metrics(genes_to_score, pos_category="strictly_zygotic_minor_wave", ctrl_category="control_non_activated")
                 m_sl_nt = benchmark_transfer_metrics(genes_to_score, pos_category="slam_confirmed_minor_wave", ctrl_category="control_non_activated")
                 strict_auc = round(float(m_st_nt["roc_auc"]), 4) if not np.isnan(m_st_nt.get("roc_auc", np.nan)) else None
                 slam_auc = round(float(m_sl_nt["roc_auc"]), 4) if not np.isnan(m_sl_nt.get("roc_auc", np.nan)) else None
+
+                slam_track_strict_auc, slam_track_slam_auc = None, None
+                if len(g_scores_slam) == len(genes_to_score):
+                    genes_to_score["pred_slam_2.5hpf"] = g_scores_slam
+                    m_st_sl = benchmark_transfer_metrics(genes_to_score, score_col="pred_slam_2.5hpf", pos_category="strictly_zygotic_minor_wave", ctrl_category="control_non_activated")
+                    m_sl_sl = benchmark_transfer_metrics(genes_to_score, score_col="pred_slam_2.5hpf", pos_category="slam_confirmed_minor_wave", ctrl_category="control_non_activated")
+                    slam_track_strict_auc = round(float(m_st_sl["roc_auc"]), 4) if not np.isnan(m_st_sl.get("roc_auc", np.nan)) else None
+                    slam_track_slam_auc = round(float(m_sl_sl["roc_auc"]), 4) if not np.isnan(m_sl_sl.get("roc_auc", np.nan)) else None
             except Exception as e_tgt:
                 print(f"[-] NTv3 target minor-wave zero-shot notice: {e_tgt}")
 
@@ -1211,6 +1344,8 @@ def run_baselines_benchmark(
             "medaka_st9_auroc": medaka_auc,
             "strictly_zygotic_auroc": strict_auc,
             "slam_confirmed_auroc": slam_auc,
+            "slam_track_strictly_zygotic_auroc": slam_track_strict_auc,
+            "slam_track_slam_confirmed_auroc": slam_track_slam_auc,
             "status": "evaluated"
         }
         print(f"    [+] {model_label} Results -> ATAC Spearman r: {sp_early:.4f}, Early-vs-Late AUROC: {auc_evl:.4f}, SLAM r: {slam_str}, Medaka AUROC: {medaka_auc}")
@@ -1241,14 +1376,7 @@ def run_baselines_benchmark(
                 raw_trunk.to(device)
                 raw_trunk.eval()
 
-                zf_track_indices = []
-                for t_entry in native_zf_tracks:
-                    if isinstance(t_entry, dict) and "index" in t_entry:
-                        zf_track_indices.append(int(t_entry["index"]))
-                    elif isinstance(t_entry, int):
-                        zf_track_indices.append(t_entry)
-
-                if zf_track_indices and len(test_windows) > 0 and genome_fa.exists():
+                if len(test_windows) > 0 and genome_fa.exists():
                     raw_preds = []
                     from pyfaidx import Fasta
                     z_fa = Fasta(str(genome_fa), as_raw=True)
@@ -1263,21 +1391,19 @@ def run_baselines_benchmark(
                                 w_seq += "N" * (context_len - len(w_seq))
                             b_enc = raw_tok(w_seq, add_special_tokens=False, return_tensors="pt", max_length=context_len, truncation=True, padding="max_length")
                             with torch.amp.autocast(device_type=device.type, dtype=autocast_dtype):
+                                b_cond = [torch.full((b_enc["input_ids"].shape[0],), resolved_species_id, dtype=torch.long, device=device)]
                                 out_raw = raw_trunk(
                                     input_ids=b_enc["input_ids"].to(device),
-                                    track_indices=zf_track_indices,
-                                    species_ids=torch.full((b_enc["input_ids"].shape[0],), resolved_species_id, dtype=torch.long, device=device)
+                                    conditions_tokens=b_cond
                                 )
-                            if hasattr(out_raw, "tracks") and out_raw.tracks is not None:
-                                trk = out_raw.tracks
+                            if hasattr(out_raw, "bigwig_tracks_logits") and out_raw.bigwig_tracks_logits is not None:
+                                trk = out_raw.bigwig_tracks_logits[:, :, :len(native_zf_tracks)]
+                            elif hasattr(out_raw, "tracks") and out_raw.tracks is not None:
+                                trk = out_raw.tracks[:, :, :len(native_zf_tracks)]
                             elif hasattr(out_raw, "logits") and out_raw.logits is not None:
-                                trk = out_raw.logits
-                            elif isinstance(out_raw, dict) and "tracks" in out_raw:
-                                trk = out_raw["tracks"]
-                            elif isinstance(out_raw, (tuple, list)):
-                                trk = out_raw[0]
+                                trk = out_raw.logits[:, :, :len(native_zf_tracks)]
                             else:
-                                trk = out_raw
+                                trk = out_raw[:, :, :len(native_zf_tracks)]
                             trk_np = trk.cpu().float().numpy()
                             c_len = trk_np.shape[1]
                             half_bins = max(1, int(round(500.0 / ((context_len * 0.375) / c_len))))
@@ -1285,9 +1411,9 @@ def run_baselines_benchmark(
 
                     if raw_preds:
                         raw_preds_arr = np.array(raw_preds)
-                        early_col = "cpm_early" if "cpm_early" in df_test_eval.columns else ("early_cpm" if "early_cpm" in df_test_eval.columns else None)
-                        if early_col and len(df_test_eval) >= len(raw_preds_arr):
-                            y_true_sub = df_test_eval.iloc[:len(raw_preds_arr)][early_col].values
+                        early_col = "cpm_early" if "cpm_early" in df_test.columns else ("early_cpm" if "early_cpm" in df_test.columns else None)
+                        if early_col and len(df_test) >= len(raw_preds_arr):
+                            y_true_sub = df_test.iloc[:len(raw_preds_arr)][early_col].values
                             track_spearmans = []
                             for trk_i in range(raw_preds_arr.shape[1]):
                                 r_val, _ = stats.spearmanr(y_true_sub, raw_preds_arr[:, trk_i])
@@ -1300,7 +1426,7 @@ def run_baselines_benchmark(
                                 auc_raw = float(roc_auc_score(y_true_sub > med_val, raw_preds_arr[:, best_trk_idx])) if len(np.unique(y_true_sub > med_val)) > 1 else 0.5
                             else:
                                 best_sp, mean_sp, auc_raw = 0.0, 0.0, 0.5
-                            print(f"    [+] Native Pretrained Zebrafish Tracks ({len(zf_track_indices)} tracks) -> Best Spearman r: {best_sp:.4f}, Mean r: {mean_sp:.4f}, AUROC: {auc_raw:.4f}")
+                            print(f"    [+] Native Pretrained Zebrafish Tracks ({len(native_zf_tracks)} tracks) -> Best Spearman r: {best_sp:.4f}, Mean r: {mean_sp:.4f}, AUROC: {auc_raw:.4f}")
                             benchmarks.append({
                                 "model": "NTv3_raw_pretrained",
                                 "architecture": f"Transformer_{context_len//1000}k_pretrained_native",
@@ -1463,6 +1589,7 @@ def main():
     parser.add_argument("--grad-accum", type=int, default=16, help="Gradient accumulation steps")
     parser.add_argument("--epochs", type=int, default=3, help="Training epochs")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
+    parser.add_argument("--force-retrain", action="store_true", help="Force retraining from scratch ignoring checkpoints")
     parser.add_argument("--task-name", default="train_ntv3_zf", help="TaskManager task name for progress tracking")
     args = parser.parse_args()
 
@@ -1517,11 +1644,13 @@ def main():
         with open(chr_fold_json, "w") as f:
             json.dump(fold_dict, f, indent=2)
         checkpoint_path = out_dir / f"ntv3_best_checkpoint_fold_{args.fold}.pt"
+        state_path = out_dir / f"ntv3_last_state_fold_{args.fold}.pt"
     else:
         chr_fold_json = Path(args.chr_fold_json).resolve() if args.chr_fold_json else (
             species_atac_dir / "chr_fold.json"
         )
         checkpoint_path = out_dir / "ntv3_best_checkpoint.pt"
+        state_path = out_dir / "ntv3_last_state.pt"
 
     if args.context_len is not None and args.context_len > 0:
         context_len = args.context_len
@@ -1600,6 +1729,32 @@ def main():
         print(f"[FATAL] No BigWig tracks found under {work_dir}; cannot train NTv3.", file=sys.stderr)
         sys.exit(1)
 
+    if args.train_mode == "raw_baseline":
+        if local_rank == 0:
+            print("[*] Train mode is raw_baseline: skipping fine-tuning and running baselines benchmark directly...")
+            set_task_progress(work_dir, args.task_name, "Evaluating raw_baseline benchmark...")
+            run_baselines_benchmark(
+                work_dir=work_dir,
+                out_dir=out_dir,
+                genome_fa=genome_fa,
+                chrom_sizes=chrom_sizes,
+                chr_fold_json=chr_fold_json,
+                track_paths=track_paths,
+                context_len=context_len,
+                model_id=args.model_id,
+                train_mode=args.train_mode,
+                device=device,
+                checkpoint_path=checkpoint_path,
+                hf_token=hf_token,
+                baseline_train_windows=args.baseline_train_windows,
+                grad_accum=args.grad_accum,
+                fold=args.fold
+            )
+            set_task_progress(work_dir, args.task_name, "100% (Done)")
+        if is_distributed and torch.distributed.is_initialized():
+            torch.distributed.destroy_process_group()
+        return
+
     # Build model & tokenizer (fails loudly with sys.exit(1) if unavailable)
     model, tokenizer = build_ntv3_model(
         model_id=args.model_id,
@@ -1671,135 +1826,154 @@ def main():
     optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr)
     criterion = TrackBalancedLoss(list(track_paths.keys())).to(device)
 
-    if local_rank == 0:
-        print(f"[*] Starting training loop: {args.epochs} epochs, grad_accum={args.grad_accum}...")
+    start_epoch = 0
     best_val_loss = float("inf")
 
-    step = 0
-    for epoch in range(args.epochs):
-        if is_distributed and train_sampler is not None:
-            train_sampler.set_epoch(epoch)
+    if state_path.exists() and not args.force_retrain:
+        try:
+            state = torch.load(state_path, map_location=device, weights_only=False)
+            saved_model = model.module if hasattr(model, "module") else model
+            saved_model.load_state_dict(state["model_state"])
+            optimizer.load_state_dict(state["optimizer_state"])
+            best_val_loss = float(state.get("best_val_loss", float("inf")))
+            start_epoch = int(state.get("epoch", -1)) + 1
+            if local_rank == 0:
+                print(f"[+] Loaded resume state from {state_path.name}: starting at epoch {start_epoch + 1}/{args.epochs} (best val loss: {best_val_loss:.4f})")
+        except Exception as e:
+            if local_rank == 0:
+                print(f"[-] Warning: Failed to load resume state from {state_path.name} ({e}). Starting from epoch 0.")
+            start_epoch = 0
 
-        model.train()
-        epoch_loss = 0.0
-        n_batches = 0
-        optimizer.zero_grad()
+    if start_epoch >= args.epochs and checkpoint_path.exists():
+        if local_rank == 0:
+            print(f"[+] Training already completed ({start_epoch} >= {args.epochs} epochs) and checkpoint exists at {checkpoint_path}. Skipping training loop.")
+    else:
+        if local_rank == 0:
+            print(f"[*] Starting training loop: {start_epoch + 1} -> {args.epochs} epochs, grad_accum={args.grad_accum}...")
 
-        for batch in train_loader:
-            seqs = batch["seq"]
-            targets = batch["target"].to(device)
-            # Log1p target scaling for numerical stability
-            targets_scaled = torch.log1p(targets)
+        step = 0
+        for epoch in range(start_epoch, args.epochs):
+            if is_distributed and train_sampler is not None:
+                train_sampler.set_epoch(epoch)
 
-            if tokenizer is not None:
-                encoded = tokenizer(
-                    seqs,
-                    add_special_tokens=False,
-                    return_tensors="pt",
-                    max_length=context_len,
-                    truncation=True,
-                    padding="max_length"
-                )
-                input_ids = encoded["input_ids"].to(device)
-                attn_mask = encoded.get("attention_mask", None)
-                if attn_mask is not None:
-                    attn_mask = attn_mask.to(device)
-            else:
-                input_ids = torch.zeros((len(seqs), context_len), dtype=torch.long, device=device)
-                attn_mask = None
-
-            with torch.amp.autocast(device_type=device.type, dtype=precision):
-                preds = model(
-                    input_ids=input_ids,
-                    attention_mask=attn_mask,
-                    species_ids=torch.full((input_ids.shape[0],), resolved_species_id, dtype=torch.long, device=device)
-                )
-
-                # Ensure spatial dimensions match targets (downsample targets via adaptive_avg_pool1d)
-                if preds.shape[1] < targets_scaled.shape[1]:
-                    targets_scaled = F.adaptive_avg_pool1d(
-                        targets_scaled.permute(0, 2, 1),
-                        preds.shape[1]
-                    ).permute(0, 2, 1)
-                elif preds.shape[1] > targets_scaled.shape[1]:
-                    preds = F.adaptive_avg_pool1d(
-                        preds.permute(0, 2, 1),
-                        targets_scaled.shape[1]
-                    ).permute(0, 2, 1)
-
-                loss = criterion(preds, targets_scaled) / args.grad_accum
-
-            loss.backward()
-            epoch_loss += loss.item() * args.grad_accum
-            n_batches += 1
-            step += 1
-
-            if step % args.grad_accum == 0:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                optimizer.step()
-                optimizer.zero_grad()
-
-        if n_batches % args.grad_accum != 0:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            optimizer.step()
+            model.train()
+            epoch_loss = 0.0
+            n_batches = 0
             optimizer.zero_grad()
 
-        avg_loss = epoch_loss / max(1, n_batches)
-
-        # Validation loop
-        model.eval()
-        val_loss = 0.0
-        val_batches = 0
-        with torch.no_grad():
-            for v_batch in val_loader:
-                v_seqs = v_batch["seq"]
-                v_targets = v_batch["target"].to(device)
-                v_targets_scaled = torch.log1p(v_targets)
+            for batch in train_loader:
+                seqs = batch["seq"]
+                targets = batch["target"].to(device)
+                # Log1p target scaling for numerical stability
+                targets_scaled = torch.log1p(targets)
 
                 if tokenizer is not None:
-                    v_enc = tokenizer(
-                        v_seqs,
+                    encoded = tokenizer(
+                        seqs,
                         add_special_tokens=False,
                         return_tensors="pt",
                         max_length=context_len,
                         truncation=True,
                         padding="max_length"
                     )
-                    v_ids = v_enc["input_ids"].to(device)
-                    v_mask = v_enc.get("attention_mask", None)
-                    if v_mask is not None:
-                        v_mask = v_mask.to(device)
+                    input_ids = encoded["input_ids"].to(device)
+                    attn_mask = encoded.get("attention_mask", None)
+                    if attn_mask is not None:
+                        attn_mask = attn_mask.to(device)
                 else:
-                    v_ids = torch.zeros((len(v_seqs), context_len), dtype=torch.long, device=device)
-                    v_mask = None
+                    input_ids = torch.zeros((len(seqs), context_len), dtype=torch.long, device=device)
+                    attn_mask = None
 
                 with torch.amp.autocast(device_type=device.type, dtype=precision):
-                    v_preds = model(
-                        input_ids=v_ids,
-                        attention_mask=v_mask,
-                        species_ids=torch.full((v_ids.shape[0],), resolved_species_id, dtype=torch.long, device=device)
+                    preds = model(
+                        input_ids=input_ids,
+                        attention_mask=attn_mask,
+                        species_ids=torch.full((input_ids.shape[0],), resolved_species_id, dtype=torch.long, device=device)
                     )
-                    if v_preds.shape[1] < v_targets_scaled.shape[1]:
-                        v_targets_scaled = F.adaptive_avg_pool1d(
-                            v_targets_scaled.permute(0, 2, 1),
-                            v_preds.shape[1]
-                        ).permute(0, 2, 1)
-                    elif v_preds.shape[1] > v_targets_scaled.shape[1]:
-                        v_preds = F.adaptive_avg_pool1d(
-                            v_preds.permute(0, 2, 1),
-                            v_targets_scaled.shape[1]
-                        ).permute(0, 2, 1)
-                    v_l = criterion(v_preds, v_targets_scaled)
-                    val_loss += v_l.item()
-                    val_batches += 1
 
-        avg_val_loss = val_loss / max(1, val_batches)
-        if local_rank == 0:
-            print(f"    Epoch {epoch + 1}/{args.epochs} - Train Loss: {avg_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
-            set_task_progress(work_dir, args.task_name, f"Epoch {epoch + 1}/{args.epochs} - Val Loss: {avg_val_loss:.4f}")
+                    # Ensure spatial dimensions match targets (downsample targets via adaptive_avg_pool1d)
+                    if preds.shape[1] < targets_scaled.shape[1]:
+                        targets_scaled = F.adaptive_avg_pool1d(
+                            targets_scaled.permute(0, 2, 1),
+                            preds.shape[1]
+                        ).permute(0, 2, 1)
+                    elif preds.shape[1] > targets_scaled.shape[1]:
+                        preds = F.adaptive_avg_pool1d(
+                            preds.permute(0, 2, 1),
+                            targets_scaled.shape[1]
+                        ).permute(0, 2, 1)
 
-            if avg_val_loss < best_val_loss:
-                best_val_loss = avg_val_loss
+                    loss = criterion(preds, targets_scaled) / args.grad_accum
+
+                loss.backward()
+                epoch_loss += loss.item() * args.grad_accum
+                n_batches += 1
+                step += 1
+
+                if step % args.grad_accum == 0:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                    optimizer.step()
+                    optimizer.zero_grad()
+
+            if n_batches % args.grad_accum != 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                optimizer.step()
+                optimizer.zero_grad()
+
+            avg_loss = epoch_loss / max(1, n_batches)
+
+            # Validation loop
+            model.eval()
+            val_loss = 0.0
+            val_batches = 0
+            with torch.no_grad():
+                for v_batch in val_loader:
+                    v_seqs = v_batch["seq"]
+                    v_targets = v_batch["target"].to(device)
+                    v_targets_scaled = torch.log1p(v_targets)
+
+                    if tokenizer is not None:
+                        v_enc = tokenizer(
+                            v_seqs,
+                            add_special_tokens=False,
+                            return_tensors="pt",
+                            max_length=context_len,
+                            truncation=True,
+                            padding="max_length"
+                        )
+                        v_ids = v_enc["input_ids"].to(device)
+                        v_mask = v_enc.get("attention_mask", None)
+                        if v_mask is not None:
+                            v_mask = v_mask.to(device)
+                    else:
+                        v_ids = torch.zeros((len(v_seqs), context_len), dtype=torch.long, device=device)
+                        v_mask = None
+
+                    with torch.amp.autocast(device_type=device.type, dtype=precision):
+                        v_preds = model(
+                            input_ids=v_ids,
+                            attention_mask=v_mask,
+                            species_ids=torch.full((v_ids.shape[0],), resolved_species_id, dtype=torch.long, device=device)
+                        )
+                        if v_preds.shape[1] < v_targets_scaled.shape[1]:
+                            v_targets_scaled = F.adaptive_avg_pool1d(
+                                v_targets_scaled.permute(0, 2, 1),
+                                v_preds.shape[1]
+                            ).permute(0, 2, 1)
+                        elif v_preds.shape[1] > v_targets_scaled.shape[1]:
+                            v_preds = F.adaptive_avg_pool1d(
+                                v_preds.permute(0, 2, 1),
+                                v_targets_scaled.shape[1]
+                            ).permute(0, 2, 1)
+                        v_l = criterion(v_preds, v_targets_scaled)
+                        val_loss += v_l.item()
+                        val_batches += 1
+
+            avg_val_loss = val_loss / max(1, val_batches)
+            if local_rank == 0:
+                print(f"    Epoch {epoch + 1}/{args.epochs} - Train Loss: {avg_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
+                set_task_progress(work_dir, args.task_name, f"Epoch {epoch + 1}/{args.epochs} - Val Loss: {avg_val_loss:.4f}")
+
                 train_config = {
                     "model_id": args.model_id,
                     "compute_profile": args.compute_profile,
@@ -1814,16 +1988,44 @@ def main():
                     "best_val_loss": float(best_val_loss),
                     "device": str(device)
                 }
-                if args.fold is not None:
-                    with open(out_dir / f"ntv3_train_config_fold_{args.fold}.json", "w") as f_fold:
-                        json.dump(train_config, f_fold, indent=2)
-                else:
-                    with open(out_dir / "ntv3_train_config.json", "w") as f:
-                        json.dump(train_config, f, indent=2)
 
+                if avg_val_loss < best_val_loss:
+                    best_val_loss = avg_val_loss
+                    train_config["best_val_loss"] = float(best_val_loss)
+                    cfg_file = out_dir / (f"ntv3_train_config_fold_{args.fold}.json" if args.fold is not None else "ntv3_train_config.json")
+                    with open(cfg_file, "w") as f_cfg:
+                        json.dump(train_config, f_cfg, indent=2)
+
+                    saved_model = model.module if hasattr(model, "module") else model
+                    tmp_ckpt = checkpoint_path.with_suffix(".tmp.pt")
+                    try:
+                        clean_cfg = sanitize_for_torch_save(train_config)
+                        torch.save({"model_state": saved_model.state_dict(), "config": clean_cfg}, tmp_ckpt)
+                        os.replace(str(tmp_ckpt), str(checkpoint_path))
+                        print(f"    [+] Saved best model checkpoint to {checkpoint_path} (val loss: {best_val_loss:.4f})")
+                    except Exception as e:
+                        tmp_ckpt.unlink(missing_ok=True)
+                        print(f"[-] Warning: Failed saving checkpoint {tmp_ckpt}: {e}")
+                    finally:
+                        tmp_ckpt.unlink(missing_ok=True)
+
+                # Atomically save epoch-level state for resume
                 saved_model = model.module if hasattr(model, "module") else model
-                torch.save({"model_state": saved_model.state_dict(), "config": train_config}, checkpoint_path)
-                print(f"    [+] Saved best model checkpoint to {checkpoint_path} (val loss: {best_val_loss:.4f})")
+                tmp_state = state_path.with_suffix(".tmp.pt")
+                try:
+                    torch.save({
+                        "epoch": epoch,
+                        "model_state": saved_model.state_dict(),
+                        "optimizer_state": optimizer.state_dict(),
+                        "best_val_loss": float(best_val_loss),
+                        "train_config": sanitize_for_torch_save(train_config)
+                    }, tmp_state)
+                    os.replace(str(tmp_state), str(state_path))
+                except Exception as e:
+                    tmp_state.unlink(missing_ok=True)
+                    print(f"[-] Warning: Failed saving resume state {tmp_state}: {e}")
+                finally:
+                    tmp_state.unlink(missing_ok=True)
 
     if local_rank == 0:
         set_task_progress(work_dir, args.task_name, "100% (Done)")

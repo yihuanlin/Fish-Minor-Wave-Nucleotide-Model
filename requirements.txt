@@ -14,9 +14,8 @@ captum
 shap
 logomaker
 
-# Differential expression & peak calling
+# Differential expression
 pydeseq2
-macs3
 
 # Genomic file parsing & manipulation
 pyBigWig
@@ -32,6 +31,8 @@ scikit-learn
 matplotlib
 seaborn
 statsmodels
+tangermeme
+modisco-lite
 
 # Utilities & interactive environment
 requests

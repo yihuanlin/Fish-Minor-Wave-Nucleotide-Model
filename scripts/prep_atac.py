@@ -8,9 +8,9 @@ and continuous pre-MZT target generation (y_abs, y_rel) across blastula summits.
 Key Capabilities:
 - End-to-end FASTQ -> BAM processing (fastp trimming, bowtie2 alignment, filtering chrM/MT,
   deduplication via samtools markdup, and merging stage replicates).
-- MACS3 peak calling with auto-detection of paired-end vs single-end layout.
-  Parameters: --nomodel --shift -100 --extsize 200 --keep-dup all --call-summits.
-  Uses -c control_bam when naked gDNA control is available.
+- Publication-grade native local-lambda Poisson peak and summit calling (pure NumPy, SciPy, pysam).
+  Memory-safe chromosome-by-chromosome 5' Tn5 cut-site pileup with difference arrays,
+  prefix-sum sliding-window background (slocal, llocal), exact Poisson p-values, and two-pass BH FDR.
 - Dynamic detection of miR-430 tandem repeat locus from GTF (falling back to chr4:27-30.5 Mb on GRCz11).
 - Dynamic determination of held_out_chr from TARGET_GENES orthologs in the species GTF.
 - Primary chromosomes only in chr_fold.json (length >= 1 Mb, excluding unplaced scaffolds and chrM/MT).
@@ -41,6 +41,10 @@ if bin_dir not in os.environ.get("PATH", ""):
 
 import pandas as pd
 import numpy as np
+import pyBigWig
+import pysam
+import scipy.stats
+import scipy.signal
 
 try:
     from scripts.task_manager import set_task_progress
@@ -84,7 +88,99 @@ def get_bam_total_reads(bam_path: Path) -> int:
         parts = line.split("\t")
         if len(parts) >= 3 and not (parts[0].startswith("chrM") or parts[0] == "MT"):
             total += int(parts[2])
-    return max(total, 1)
+    return total
+
+
+def _cleanup_corrupt_bam(bam_path: Path) -> None:
+    """Helper to remove corrupt BAM and its potential index files."""
+    try:
+        bam_path = Path(bam_path)
+        bam_path.unlink(missing_ok=True)
+        bam_path.with_suffix(bam_path.suffix + ".bai").unlink(missing_ok=True)
+        Path(str(bam_path) + ".bai").unlink(missing_ok=True)
+    except Exception as e:
+        print(f"[-] Notice removing corrupt BAM {bam_path}: {e}")
+
+
+def is_valid_bam(bam_path: Path, require_index: bool = True, min_bytes: int = 1024 * 1024) -> bool:
+    """
+    Check if a BAM file is valid and complete:
+    - Exists and size >= min_bytes
+    - Passes 'samtools quickcheck'
+    - If require_index is True: .bai (or .csi) exists and is newer than or equal to BAM mtime
+    - Verifies mapped reads > 0 via get_bam_total_reads
+    If an existing BAM fails validation, log a warning and delete corrupt BAM + .bai.
+    """
+    bam_path = Path(bam_path)
+    if not bam_path.exists():
+        return False
+
+    bai_path = bam_path.with_suffix(bam_path.suffix + ".bai")
+    alt_bai = Path(str(bam_path) + ".bai")
+
+    if bam_path.stat().st_size < min_bytes:
+        print(f"[WARNING] BAM {bam_path.name} size ({bam_path.stat().st_size} bytes) < min_bytes ({min_bytes}). Purging corrupt BAM.", flush=True)
+        _cleanup_corrupt_bam(bam_path)
+        return False
+
+    res = subprocess.run(["samtools", "quickcheck", str(bam_path)], capture_output=True)
+    if res.returncode != 0:
+        print(f"[WARNING] samtools quickcheck failed for {bam_path.name}. Purging corrupt BAM.", flush=True)
+        _cleanup_corrupt_bam(bam_path)
+        return False
+
+    found_bai = None
+    if bai_path.exists():
+        found_bai = bai_path
+    elif alt_bai.exists():
+        found_bai = alt_bai
+
+    if require_index:
+        if not found_bai:
+            print(f"[WARNING] BAM index missing for {bam_path.name}. Purging incomplete BAM.", flush=True)
+            _cleanup_corrupt_bam(bam_path)
+            return False
+        if found_bai.stat().st_mtime < bam_path.stat().st_mtime:
+            print(f"[WARNING] BAM index {found_bai.name} is older than BAM {bam_path.name}. Purging stale BAM.", flush=True)
+            _cleanup_corrupt_bam(bam_path)
+            return False
+
+    try:
+        mapped = get_bam_total_reads(bam_path)
+        if mapped <= 0:
+            print(f"[WARNING] BAM {bam_path.name} has 0 mapped reads. Purging invalid BAM.", flush=True)
+            _cleanup_corrupt_bam(bam_path)
+            return False
+    except Exception as e:
+        print(f"[WARNING] Failed checking mapped reads for {bam_path.name}: {e}. Purging corrupt BAM.", flush=True)
+        _cleanup_corrupt_bam(bam_path)
+        return False
+
+    return True
+
+
+def is_valid_gzip(path: Path) -> bool:
+    """Verify gzip file integrity using gzip -t."""
+    if not path.exists() or path.stat().st_size == 0:
+        return False
+    res = subprocess.run(["gzip", "-t", str(path)], capture_output=True)
+    return res.returncode == 0
+
+
+def is_valid_bw(bw_path: Path, min_bytes: int = 1024) -> bool:
+    """Validate BigWig file using pyBigWig.open, closing immediately."""
+    bw_path = Path(bw_path)
+    if not bw_path.exists() or bw_path.stat().st_size < min_bytes:
+        return False
+    try:
+        bw = pyBigWig.open(str(bw_path))
+        if bw is None:
+            return False
+        header = bw.header()
+        bw.close()
+        return bool(header)
+    except Exception:
+        return False
 
 
 def align_and_process_fastq(
@@ -93,11 +189,12 @@ def align_and_process_fastq(
     genome_fa: Path,
     bowtie2_index_prefix: str,
     output_bam: Path,
-    threads: int = 8
+    threads: int = 8,
+    report_dir: Optional[Path] = None
 ) -> Path:
     """Trim with fastp, align with bowtie2, filter MT/chrM, sort, deduplicate, and index."""
     output_bam.parent.mkdir(parents=True, exist_ok=True)
-    if output_bam.exists() and output_bam.stat().st_size > 10 * 1024 * 1024:
+    if is_valid_bam(output_bam, require_index=True, min_bytes=10 * 1024 * 1024):
         print(f"[+] Processed BAM exists & verified: {output_bam}")
         return output_bam
 
@@ -105,22 +202,99 @@ def align_and_process_fastq(
     trimmed_r1 = prefix.with_suffix(".trimmed_R1.fq.gz")
     trimmed_r2 = prefix.with_suffix(".trimmed_R2.fq.gz") if fastq_r2 else None
 
-    # 1. fastp trimming
-    if not trimmed_r1.exists():
-        fastp_cmd = ["fastp", "-i", str(fastq_r1), "-o", str(trimmed_r1), "-w", str(min(threads, 4))]
-        if fastq_r2:
-            fastp_cmd.extend(["-I", str(fastq_r2), "-O", str(trimmed_r2)])
-        run_cmd(fastp_cmd, desc=f"Running fastp quality & adapter trimming on {fastq_r1.name}")
+    # 1. fastp trimming with validation and atomic rename
+    need_trim = True
+    if is_valid_gzip(trimmed_r1) and (trimmed_r2 is None or is_valid_gzip(trimmed_r2)):
+        need_trim = False
+        print(f"[+] Reusing verified trimmed FASTQs for {output_bam.stem}")
+    else:
+        trimmed_r1.unlink(missing_ok=True)
+        if trimmed_r2:
+            trimmed_r2.unlink(missing_ok=True)
 
-    # 2. Bowtie2 index check
-    idx_1 = Path(f"{bowtie2_index_prefix}.1.bt2")
-    idx_1_l = Path(f"{bowtie2_index_prefix}.1.bt2l")
-    if not (idx_1.exists() or idx_1_l.exists()):
+    if need_trim:
+        # Validate input FASTQ gzip integrity before invoking fastp
+        for fq in [fastq_r1, fastq_r2]:
+            if fq is not None and str(fq).endswith(".gz"):
+                if not is_valid_gzip(Path(fq)):
+                    raise RuntimeError(
+                        f"Corrupted or invalid input FASTQ gzip file (failed gzip -t check): {Path(fq).resolve()}"
+                    )
+
+        rep_dir = Path(report_dir) if report_dir is not None else Path(fastq_r1).resolve().parent
+        rep_dir.mkdir(parents=True, exist_ok=True)
+        fq_stem = re.sub(r"\.(fastq|fq)(\.gz)?$", "", Path(fastq_r1).name, flags=re.IGNORECASE)
+
+        tmp_r1 = trimmed_r1.with_suffix(".tmp.fq.gz")
+        tmp_r2 = trimmed_r2.with_suffix(".tmp.fq.gz") if trimmed_r2 else None
+        tmp_r1.unlink(missing_ok=True)
+        if tmp_r2:
+            tmp_r2.unlink(missing_ok=True)
+
+        fastp_cmd = [
+            "fastp",
+            "-i", str(fastq_r1),
+            "-o", str(tmp_r1),
+            "-w", str(min(threads, 4)),
+            "-j", str(rep_dir / f"{fq_stem}_fastp.json"),
+            "-h", str(rep_dir / f"{fq_stem}_fastp.html")
+        ]
+        if fastq_r2 and tmp_r2:
+            fastp_cmd.extend(["-I", str(fastq_r2), "-O", str(tmp_r2)])
+
+        try:
+            run_cmd(fastp_cmd, desc=f"Running fastp quality & adapter trimming on {fastq_r1.name}")
+            if not is_valid_gzip(tmp_r1) or (tmp_r2 and not is_valid_gzip(tmp_r2)):
+                raise RuntimeError("fastp finished but output FASTQs failed gzip integrity check.")
+            os.replace(str(tmp_r1), str(trimmed_r1))
+            if tmp_r2 and trimmed_r2:
+                os.replace(str(tmp_r2), str(trimmed_r2))
+        except Exception as e:
+            tmp_r1.unlink(missing_ok=True)
+            if tmp_r2:
+                tmp_r2.unlink(missing_ok=True)
+            raise e
+
+    # 2. Bowtie2 index check (.bt2.done + 6 core index files)
+    bt2_done = Path(f"{bowtie2_index_prefix}.bt2.done")
+    bt2_suffixes = [".1", ".2", ".3", ".4", ".rev.1", ".rev.2"]
+    has_bt2 = bt2_done.exists() and all(
+        (Path(f"{bowtie2_index_prefix}{s}.bt2").exists() and Path(f"{bowtie2_index_prefix}{s}.bt2").stat().st_size > 0)
+        or (Path(f"{bowtie2_index_prefix}{s}.bt2l").exists() and Path(f"{bowtie2_index_prefix}{s}.bt2l").stat().st_size > 0)
+        for s in bt2_suffixes
+    )
+    if not has_bt2:
+        print(f"[*] Incomplete or missing Bowtie2 index for {genome_fa.name}. Cleaning partial files before rebuilding...", flush=True)
+        bt2_done.unlink(missing_ok=True)
+        for s in bt2_suffixes:
+            Path(f"{bowtie2_index_prefix}{s}.bt2").unlink(missing_ok=True)
+            Path(f"{bowtie2_index_prefix}{s}.bt2l").unlink(missing_ok=True)
+
         print(f"[*] Building Bowtie2 index for {genome_fa.name}...", flush=True)
-        run_cmd(["bowtie2-build", "--threads", str(threads), str(genome_fa), bowtie2_index_prefix], desc="Building Bowtie2 index")
+        try:
+            run_cmd(["bowtie2-build", "--threads", str(threads), str(genome_fa), bowtie2_index_prefix], desc="Building Bowtie2 index")
+            assert all(
+                (Path(f"{bowtie2_index_prefix}{s}.bt2").exists() and Path(f"{bowtie2_index_prefix}{s}.bt2").stat().st_size > 0)
+                or (Path(f"{bowtie2_index_prefix}{s}.bt2l").exists() and Path(f"{bowtie2_index_prefix}{s}.bt2l").stat().st_size > 0)
+                for s in bt2_suffixes
+            ), "Bowtie2 index build finished but core index files missing."
+            bt2_done.touch()
+        except Exception as e:
+            bt2_done.unlink(missing_ok=True)
+            for s in bt2_suffixes:
+                Path(f"{bowtie2_index_prefix}{s}.bt2").unlink(missing_ok=True)
+                Path(f"{bowtie2_index_prefix}{s}.bt2l").unlink(missing_ok=True)
+            raise e
 
-    # 3. Alignment
+    # 3. Alignment & merging
     raw_sam = prefix.with_suffix(".raw.sam")
+    markdup_bam = prefix.with_suffix(".markdup.bam")
+    tmp_bam = output_bam.with_suffix(".tmp.bam")
+
+    raw_sam.unlink(missing_ok=True)
+    markdup_bam.unlink(missing_ok=True)
+    tmp_bam.unlink(missing_ok=True)
+
     bt2_cmd = [
         "bowtie2", "-x", bowtie2_index_prefix,
         "-p", str(threads),
@@ -133,57 +307,85 @@ def align_and_process_fastq(
         bt2_cmd.extend(["-U", str(trimmed_r1)])
     bt2_cmd.extend(["-S", str(raw_sam)])
 
-    run_cmd(bt2_cmd, desc=f"Bowtie2 alignment for {output_bam.stem}")
+    try:
+        run_cmd(bt2_cmd, desc=f"Bowtie2 alignment for {output_bam.stem}")
 
-    # 4. Filter exact chrM/MT, sort, deduplicate (paired-end requires name-sort -> fixmate -m -> coord-sort -> markdup)
-    if trimmed_r2:
-        markdup_bam = prefix.with_suffix(".markdup.bam")
-        pipe_cmd = (
-            f"samtools view -h -q 30 -f 2 -F 1804 '{raw_sam}' | "
-            f"awk -F'\\t' '/^@/ || ($3 != \"chrM\" && $3 != \"MT\" && $3 != \"M\" && $3 != \"chrMT\")' | "
-            f"samtools sort -n -@ {threads} - | "
-            f"samtools fixmate -m -@ {threads} - - | "
-            f"samtools sort -@ {threads} - | "
-            f"samtools markdup -r -@ {threads} - '{markdup_bam}'"
-        )
-        run_cmd(pipe_cmd, desc=f"Filtering chrM, proper pairs (-f 2), fixmate -m and markdup (paired-end) for {output_bam.stem}")
-        shutil.move(str(markdup_bam), str(output_bam))
-    else:
-        # Single-end: DO NOT deduplicate per ChromBPNet official guidelines so true cut pileups are not collapsed
-        pipe_cmd = (
-            f"samtools view -h -q 30 -F 1804 '{raw_sam}' | "
-            f"awk -F'\\t' '/^@/ || ($3 != \"chrM\" && $3 != \"MT\" && $3 != \"M\" && $3 != \"chrMT\")' | "
-            f"samtools sort -@ {threads} -o '{output_bam}'"
-        )
-        run_cmd(pipe_cmd, desc=f"Filtering chrM and coordinate sorting (single-end, no markdup) for {output_bam.stem}")
+        # 4. Filter exact chrM/MT, sort, deduplicate
+        if trimmed_r2:
+            pipe_cmd = (
+                f"samtools view -h -q 30 -f 2 -F 1804 '{raw_sam}' | "
+                f"awk -F'\\t' '/^@/ || ($3 != \"chrM\" && $3 != \"MT\" && $3 != \"M\" && $3 != \"chrMT\")' | "
+                f"samtools sort -n -@ {threads} - | "
+                f"samtools fixmate -m -@ {threads} - - | "
+                f"samtools sort -@ {threads} - | "
+                f"samtools markdup -r -@ {threads} - '{markdup_bam}'"
+            )
+            run_cmd(pipe_cmd, desc=f"Filtering chrM, proper pairs (-f 2), fixmate -m and markdup (paired-end) for {output_bam.stem}")
+            shutil.move(str(markdup_bam), str(tmp_bam))
+        else:
+            # Single-end: DO NOT deduplicate per ChromBPNet official guidelines so true cut pileups are not collapsed
+            pipe_cmd = (
+                f"samtools view -h -q 30 -F 1804 '{raw_sam}' | "
+                f"awk -F'\\t' '/^@/ || ($3 != \"chrM\" && $3 != \"MT\" && $3 != \"M\" && $3 != \"chrMT\")' | "
+                f"samtools sort -@ {threads} -o '{tmp_bam}'"
+            )
+            run_cmd(pipe_cmd, desc=f"Filtering chrM and coordinate sorting (single-end, no markdup) for {output_bam.stem}")
 
-    raw_sam.unlink(missing_ok=True)
-    run_cmd(f"samtools index -@ {threads} '{output_bam}'", desc=f"Indexing {output_bam.name}")
+        res = subprocess.run(["samtools", "quickcheck", str(tmp_bam)], capture_output=True)
+        if res.returncode != 0:
+            raise RuntimeError(f"samtools quickcheck failed on {tmp_bam}")
 
-    # Cleanup trimmed FASTQs
-    trimmed_r1.unlink(missing_ok=True)
-    if trimmed_r2:
-        trimmed_r2.unlink(missing_ok=True)
+        os.replace(str(tmp_bam), str(output_bam))
+        run_cmd(f"samtools index -@ {threads} '{output_bam}'", desc=f"Indexing {output_bam.name}")
+    except Exception as e:
+        tmp_bam.unlink(missing_ok=True)
+        _cleanup_corrupt_bam(output_bam)
+        raise e
+    finally:
+        raw_sam.unlink(missing_ok=True)
+        markdup_bam.unlink(missing_ok=True)
+        tmp_bam.unlink(missing_ok=True)
+        # Cleanup trimmed FASTQs
+        trimmed_r1.unlink(missing_ok=True)
+        if trimmed_r2:
+            trimmed_r2.unlink(missing_ok=True)
 
     print(f"[+] Successfully generated and indexed BAM: {output_bam}")
     return output_bam
 
 
 def merge_bams(bam_list: List[Path], output_bam: Path, threads: int = 8) -> Path:
-    """Merge multiple BAM files and index."""
-    if len(bam_list) == 1:
-        if bam_list[0].resolve() != output_bam.resolve():
-            shutil.copy(bam_list[0], output_bam)
-            run_cmd(f"samtools index -@ {threads} '{output_bam}'", desc=f"Indexing {output_bam.name}")
+    """Merge multiple BAM files and index atomically."""
+    output_bam.parent.mkdir(parents=True, exist_ok=True)
+    min_bytes = 10 * 1024 * 1024 if len(bam_list) > 1 else 1024
+    if is_valid_bam(output_bam, require_index=True, min_bytes=min_bytes):
+        print(f"[+] Merged BAM exists & verified: {output_bam}")
         return output_bam
 
-    if output_bam.exists() and output_bam.stat().st_size > 10 * 1024 * 1024:
-        print(f"[+] Merged BAM exists: {output_bam}")
-        return output_bam
+    tmp_bam = output_bam.with_suffix(".tmp.bam")
+    tmp_bam.unlink(missing_ok=True)
 
-    cmd = ["samtools", "merge", "-@", str(threads), "-f", str(output_bam)] + [str(b) for b in bam_list]
-    run_cmd(cmd, desc=f"Merging {len(bam_list)} BAMs into {output_bam.name}")
-    run_cmd(f"samtools index -@ {threads} '{output_bam}'", desc=f"Indexing {output_bam.name}")
+    try:
+        if len(bam_list) == 1:
+            if bam_list[0].resolve() != output_bam.resolve():
+                shutil.copy(bam_list[0], tmp_bam)
+        else:
+            cmd = ["samtools", "merge", "-@", str(threads), "-f", str(tmp_bam)] + [str(b) for b in bam_list]
+            run_cmd(cmd, desc=f"Merging {len(bam_list)} BAMs into {output_bam.name}")
+
+        res = subprocess.run(["samtools", "quickcheck", str(tmp_bam)], capture_output=True)
+        if res.returncode != 0:
+            raise RuntimeError(f"samtools quickcheck failed on merged BAM {tmp_bam}")
+
+        os.replace(str(tmp_bam), str(output_bam))
+        run_cmd(f"samtools index -@ {threads} '{output_bam}'", desc=f"Indexing {output_bam.name}")
+    except Exception as e:
+        tmp_bam.unlink(missing_ok=True)
+        _cleanup_corrupt_bam(output_bam)
+        raise e
+    finally:
+        tmp_bam.unlink(missing_ok=True)
+
     return output_bam
 
 
@@ -260,60 +462,377 @@ def detect_held_out_chromosome(gtf_path: Path, target_gene_symbols: List[str]) -
     return None
 
 
-def call_peaks_macs3(
+def call_peaks_native(
     late_bam: Path,
     output_dir: Path,
     species_name: str,
+    chrom_sizes: Any,
     control_bam: Optional[Path] = None,
-    genome_size: Optional[str] = None
+    genome_size: Optional[Any] = None,
+    qvalue: float = 0.01,
+    extsize: int = 200,
+    min_peak_len: int = 200,
+    max_gap: int = 50,
+    min_fold_enrichment: float = 2.0
 ) -> Tuple[Path, Path]:
-    """Call peaks on late blastula ATAC BAM with MACS3."""
+    """
+    Publication-grade native local-lambda Poisson peak and summit caller.
+    Pure Python (numpy + scipy + pysam) peak caller.
+    Emits standard ENCODE 10-column narrowPeak and 5-column summits.bed.
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
-    prefix = f"{species_name}_late"
-    out_narrow = output_dir / f"{prefix}_peaks.narrowPeak"
-    out_summits = output_dir / f"{prefix}_summits.bed"
+    out_narrow = output_dir / f"{species_name}_late_peaks.narrowPeak"
+    out_summits = output_dir / f"{species_name}_late_summits.bed"
 
-    if out_narrow.exists() and out_summits.exists() and out_narrow.stat().st_size > 1024:
-        print(f"[+] MACS3 peaks already exist: {out_narrow}")
-        return out_narrow, out_summits
+    # Checkpointing: if both files exist, are > 1024 bytes, and pass 10-col narrowPeak sanity check
+    if out_narrow.exists() and out_summits.exists() and out_narrow.stat().st_size > 1024 and out_summits.stat().st_size > 1024:
+        is_valid = True
+        try:
+            with open(out_narrow, "r") as f:
+                lines = [f.readline() for _ in range(50)]
+            valid_lines = 0
+            for line in lines:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                parts = line.split("\t")
+                if len(parts) < 10:
+                    is_valid = False
+                    break
+                p_s = int(parts[1])
+                p_e = int(parts[2])
+                offset = int(parts[9])
+                if not (0 <= offset < (p_e - p_s)):
+                    is_valid = False
+                    break
+                valid_lines += 1
+            if valid_lines == 0:
+                is_valid = False
+        except Exception:
+            is_valid = False
 
-    # ENCODE/ChromBPNet ATAC standard: treat both SE and PE as single-end BAM (-f BAM --nomodel --shift -100 --extsize 200)
-    # so MACS3 summits center strictly on 5' Tn5 cut sites rather than paired-end nucleosome midpoints
-    # and eliminates PE/SE mismatch crashes when control_bam is provided.
-    format_arg = "BAM"
+        if is_valid:
+            print(f"[+] Native peaks already exist & verified: {out_narrow.name}, {out_summits.name}")
+            return out_narrow, out_summits
+        else:
+            print(f"[-] Existing peak files failed validation; re-calling peaks...")
 
-    g_size = genome_size
-    if not g_size:
+    # Parse chrom_sizes
+    if isinstance(chrom_sizes, (str, Path)):
+        chrom_sizes_dict: Dict[str, int] = {}
+        with open(chrom_sizes, "r") as cs_f:
+            for line in cs_f:
+                p = line.strip().split("\t")
+                if len(p) >= 2 and p[1].isdigit():
+                    chrom_sizes_dict[p[0]] = int(p[1])
+    else:
+        chrom_sizes_dict = dict(chrom_sizes)
+
+    bam = pysam.AlignmentFile(str(late_bam), "rb")
+    valid_chroms = [
+        (c, chrom_sizes_dict[c]) for c in chrom_sizes_dict
+        if c in bam.references
+        and not (c in {"chrM", "MT", "M", "chrMT"} or c.startswith("chrM") or c.startswith("MT"))
+        and chrom_sizes_dict[c] >= extsize
+    ]
+    assert len(valid_chroms) > 0, f"[FATAL] No valid reference chromosomes found in BAM {late_bam} matching chrom.sizes"
+
+    total_genome_bases = sum(l for _, l in valid_chroms)
+    if genome_size is not None:
+        g_eff = float(genome_size)
+    else:
         sp_l = species_name.lower()
         if "danio" in sp_l or "rerio" in sp_l:
-            g_size = "1.4e9"
+            g_eff = 1.4e9
         elif "oryzias" in sp_l or "latipes" in sp_l:
-            g_size = "7.3e8"
+            g_eff = 7.3e8
         else:
-            g_size = "1.0e9"
+            g_eff = float(total_genome_bases)
 
-    cmd = [
-        "macs3", "callpeak",
-        "-t", str(late_bam),
-        "-f", format_arg,
-        "-g", str(g_size),
-        "--outdir", str(output_dir),
-        "-n", prefix,
-        "-q", "0.01",
-        "--nomodel",
-        "--shift", "-100",
-        "--extsize", "200",
-        "--keep-dup", "all",
-        "--call-summits"
-    ]
-    if control_bam and control_bam.exists():
-        cmd.extend(["-c", str(control_bam)])
+    # Treatment total tags across valid chromosomes
+    idx_stats = {s.contig: s.mapped for s in bam.get_index_statistics()}
+    total_treat_tags = sum(idx_stats.get(c, 0) for c, _ in valid_chroms)
+    if total_treat_tags == 0:
+        total_treat_tags = get_bam_total_reads(late_bam)
+    assert total_treat_tags > 0, f"[FATAL] Late BAM has 0 mapped reads across target chromosomes: {late_bam}"
 
-    run_cmd(cmd, desc=f"MACS3 peak calling for {species_name} (Format: {format_arg}, gsize: {g_size})")
+    ctrl_bam = None
+    ctrl_scale = 1.0
+    if control_bam and Path(control_bam).exists():
+        ctrl_bam = pysam.AlignmentFile(str(control_bam), "rb")
+        ctrl_idx = {s.contig: s.mapped for s in ctrl_bam.get_index_statistics()}
+        total_ctrl_tags = sum(ctrl_idx.get(c, 0) for c, _ in valid_chroms)
+        if total_ctrl_tags == 0:
+            total_ctrl_tags = get_bam_total_reads(control_bam)
+        ctrl_scale = total_treat_tags / max(total_ctrl_tags, 1)
 
-    assert out_narrow.exists() and out_narrow.stat().st_size > 1024, f"[FATAL] MACS3 failed to produce peaks at {out_narrow}"
-    assert out_summits.exists() and out_summits.stat().st_size > 1024, f"[FATAL] MACS3 failed to produce summits at {out_summits}"
-    print(f"[+] MACS3 peak calling complete: {out_narrow.name}, {out_summits.name}")
+    lambda_bg = float((total_treat_tags * extsize) / g_eff)
+    min_pileup_eval = max(5, int(math.ceil(2.0 * lambda_bg)))
+    half_ext = extsize // 2
+
+    print(f"[*] Native Peak Caller: species={species_name}, treat_tags={total_treat_tags:,}, G_eff={g_eff:.2e}, lambda_bg={lambda_bg:.3f}, min_eval={min_pileup_eval}")
+
+    tmp_narrow = out_narrow.with_suffix(".narrowPeak.tmp")
+    tmp_summits = out_summits.with_suffix(".bed.tmp")
+    tmp_narrow.unlink(missing_ok=True)
+    tmp_summits.unlink(missing_ok=True)
+
+    try:
+        # Pass 1: Cut-site collection, pileup, local-lambda, Poisson p-values, histogram & candidate regions
+        p_hist = np.zeros(30001, dtype=np.int64)
+        cand_intervals = []
+
+        for chrom, chrom_len in valid_chroms:
+            # 5' Tn5 cut positions (+ strand: start + 4, - strand: end - 5)
+            cuts = []
+            for r in bam.fetch(chrom):
+                if r.flag & 0xF04:
+                    continue
+                c = (r.reference_end - 5) if (r.flag & 0x10) else (r.reference_start + 4)
+                if 0 <= c < chrom_len:
+                    cuts.append(c)
+
+            if len(cuts) == 0:
+                p_hist[0] += chrom_len
+                continue
+
+            cuts_arr = np.array(cuts, dtype=np.int32)
+            starts = np.clip(cuts_arr - half_ext, 0, chrom_len)
+            ends = np.clip(cuts_arr + half_ext, 0, chrom_len)
+            diff = np.bincount(starts, minlength=chrom_len + 1) - np.bincount(ends, minlength=chrom_len + 1)
+            pileup = np.cumsum(diff[:chrom_len], dtype=np.int32)
+
+            # Local lambda computation
+            if ctrl_bam is not None:
+                ctrl_cuts = []
+                for r in ctrl_bam.fetch(chrom):
+                    if r.flag & 0xF04:
+                        continue
+                    c = (r.reference_end - 5) if (r.flag & 0x10) else (r.reference_start + 4)
+                    if 0 <= c < chrom_len:
+                        ctrl_cuts.append(c)
+                if len(ctrl_cuts) > 0:
+                    ctrl_cuts_arr = np.array(ctrl_cuts, dtype=np.int32)
+                    c_starts = np.clip(ctrl_cuts_arr - half_ext, 0, chrom_len)
+                    c_ends = np.clip(ctrl_cuts_arr + half_ext, 0, chrom_len)
+                    c_diff = np.bincount(c_starts, minlength=chrom_len + 1) - np.bincount(c_ends, minlength=chrom_len + 1)
+                    base_pileup = np.cumsum(c_diff[:chrom_len], dtype=np.float64) * ctrl_scale
+                else:
+                    base_pileup = pileup.astype(np.float64)
+            else:
+                base_pileup = pileup.astype(np.float64)
+
+            pref = np.zeros(chrom_len + 1, dtype=np.float64)
+            np.cumsum(base_pileup, dtype=np.float64, out=pref[1:])
+
+            x = np.arange(chrom_len, dtype=np.int32)
+
+            # llocal = 10,000 bp
+            hw_10k = 5000
+            s10k = np.clip(x - hw_10k, 0, chrom_len)
+            e10k = np.clip(x + (10000 - hw_10k), 0, chrom_len)
+            mean_10k = (pref[e10k] - pref[s10k]) / np.maximum(1, e10k - s10k)
+
+            if ctrl_bam is not None:
+                # slocal = 1,000 bp (only used when control is available, matching MACS standard behavior)
+                hw_1k = 500
+                s1k = np.clip(x - hw_1k, 0, chrom_len)
+                e1k = np.clip(x + (1000 - hw_1k), 0, chrom_len)
+                mean_1k = (pref[e1k] - pref[s1k]) / np.maximum(1, e1k - s1k)
+
+                hw_d = half_ext
+                sd = np.clip(x - hw_d, 0, chrom_len)
+                ed = np.clip(x + (extsize - hw_d), 0, chrom_len)
+                mean_d = (pref[ed] - pref[sd]) / np.maximum(1, ed - sd)
+
+                lambda_local = np.maximum(lambda_bg, mean_1k)
+                np.maximum(lambda_local, mean_10k, out=lambda_local)
+                np.maximum(lambda_local, mean_d, out=lambda_local)
+            else:
+                # When no control is provided, omit 1,000 bp slocal on treatment pileup to prevent peak self-suppression
+                lambda_local = np.maximum(lambda_bg, mean_10k)
+
+            cand_mask = pileup >= min_pileup_eval
+            n_skip = chrom_len - int(np.count_nonzero(cand_mask))
+            p_hist[0] += n_skip
+
+            if n_skip == chrom_len:
+                continue
+
+            p_sub = pileup[cand_mask]
+            lam_sub = np.round(lambda_local[cand_mask], 2)
+            pairs = np.column_stack((p_sub, (lam_sub * 100).astype(np.int32)))
+            unique_pairs, inv_idx = np.unique(pairs, axis=0, return_inverse=True)
+
+            k_arr = unique_pairs[:, 0]
+            lam_arr = unique_pairs[:, 1] / 100.0
+            log_sf = scipy.stats.poisson.logsf(k_arr - 1, mu=lam_arr)
+            neg_log10_u = np.clip(-log_sf / np.log(10.0), 0.0, 300.0)
+            neg_log10_cand = neg_log10_u[inv_idx]
+
+            bins = np.clip(np.round(neg_log10_cand * 100).astype(np.int32), 0, 30000)
+            p_hist += np.bincount(bins, minlength=30001)
+
+            # Sparse candidate intervals: neg_log10_p >= 2.0 and fold >= min_fold_enrichment
+            is_cand = (neg_log10_cand >= 2.0) & (p_sub / np.maximum(lam_sub, 1e-6) >= min_fold_enrichment)
+            cand_pos = np.where(cand_mask)[0][is_cand]
+            if len(cand_pos) == 0:
+                continue
+
+            cand_genome = np.zeros(chrom_len, dtype=bool)
+            cand_genome[cand_pos] = True
+            d_c = np.diff(np.pad(cand_genome.astype(np.int8), (1, 1), 'constant'))
+            s_c = np.where(d_c == 1)[0]
+            e_c = np.where(d_c == -1)[0]
+
+            pad = half_ext
+            merged_c = []
+            for s_i, e_i in zip(s_c, e_c):
+                s_p = max(0, int(s_i) - pad)
+                e_p = min(chrom_len, int(e_i) + pad)
+                if not merged_c:
+                    merged_c.append([s_p, e_p])
+                else:
+                    if s_p - merged_c[-1][1] <= max_gap:
+                        merged_c[-1][1] = e_p
+                    else:
+                        merged_c.append([s_p, e_p])
+
+            neg_log10_p_full = np.zeros(chrom_len, dtype=np.float32)
+            neg_log10_p_full[cand_mask] = neg_log10_cand.astype(np.float32)
+
+            for ms, me in merged_c:
+                cand_intervals.append({
+                    "chrom": chrom,
+                    "start": ms,
+                    "end": me,
+                    "pileup": pileup[ms:me].copy(),
+                    "neg_log10_p": neg_log10_p_full[ms:me].copy(),
+                    "lambda_local": lambda_local[ms:me].astype(np.float32).copy()
+                })
+
+        # Genome-wide Benjamini-Hochberg FDR lookup table
+        total_tests = int(p_hist.sum())
+        assert total_tests == total_genome_bases, f"Histogram test sum ({total_tests}) != total genome bases ({total_genome_bases})"
+
+        R = np.cumsum(p_hist[::-1])[::-1]
+        b_idx = np.arange(30001)
+        neg_log10_p_grid = b_idx / 100.0
+        log10_M = np.log10(total_tests)
+        log10_R = np.where(R > 0, np.log10(np.maximum(R, 1)), 0.0)
+        raw_neg_log10_q = np.maximum(0.0, np.where(R > 0, neg_log10_p_grid - log10_M + log10_R, 0.0))
+        neg_log10_q_lut = np.maximum.accumulate(raw_neg_log10_q)
+
+        target_neg_log10_q = -math.log10(qvalue)
+        smooth_k = np.ones(51, dtype=np.float64) / 51.0
+        letters = "abcdefghijklmnopqrstuvwxyz"
+
+        peaks_count = 0
+        summits_count = 0
+        widths = []
+        fes = []
+
+        with open(tmp_narrow, "w") as f_narrow, open(tmp_summits, "w") as f_summits:
+            for cand in cand_intervals:
+                chrom = cand["chrom"]
+                ms = cand["start"]
+                p_sl = cand["pileup"]
+                np_sl = cand["neg_log10_p"]
+                lam_sl = cand["lambda_local"]
+
+                b_sl = np.clip(np.round(np_sl * 100).astype(np.int32), 0, 30000)
+                nq_sl = neg_log10_q_lut[b_sl]
+
+                sig = nq_sl >= target_neg_log10_q
+                if not np.any(sig):
+                    continue
+
+                d_s = np.diff(np.pad(sig.astype(np.int8), (1, 1), 'constant'))
+                sub_s = np.where(d_s == 1)[0]
+                sub_e = np.where(d_s == -1)[0]
+
+                sub_m = []
+                for ss, se in zip(sub_s, sub_e):
+                    if not sub_m:
+                        sub_m.append([int(ss), int(se)])
+                    else:
+                        if ss - sub_m[-1][1] <= max_gap:
+                            sub_m[-1][1] = int(se)
+                        else:
+                            sub_m.append([int(ss), int(se)])
+
+                for ps, pe in sub_m:
+                    w = pe - ps
+                    if w < min_peak_len:
+                        continue
+                    sub_p = p_sl[ps:pe].astype(np.float64)
+                    sub_lam = lam_sl[ps:pe]
+                    if np.max(sub_p / np.maximum(sub_lam, 1e-4)) < min_fold_enrichment:
+                        continue
+
+                    peaks_count += 1
+                    peak_s = ms + ps
+                    peak_e = ms + pe
+                    widths.append(w)
+
+                    smoothed = np.convolve(sub_p, smooth_k, mode='same') if w >= 51 else sub_p
+                    p_max = float(np.max(smoothed))
+                    prom = max(2.0, 0.1 * p_max)
+                    dist = min(100, max(1, w // 2))
+                    offs, _ = scipy.signal.find_peaks(smoothed, distance=dist, prominence=prom)
+                    if len(offs) == 0:
+                        offs = [int(np.argmax(smoothed))]
+
+                    n_sub_summits = len(offs)
+                    for j, off in enumerate(offs):
+                        off = int(np.clip(off, 0, w - 1))
+                        assert 0 <= off < w, f"Summit offset {off} out of bounds [0, {w})"
+                        abs_summit = peak_s + off
+                        summits_count += 1
+
+                        if n_sub_summits == 1:
+                            summit_name = f"{species_name}_late_peak_{peaks_count}"
+                        else:
+                            suffix = letters[j] if j < 26 else f"_{j}"
+                            summit_name = f"{species_name}_late_peak_{peaks_count}{suffix}"
+
+                        fe = float(sub_p[off] / max(sub_lam[off], 1e-4))
+                        np_val = float(np_sl[ps + off])
+                        nq_val = float(nq_sl[ps + off])
+                        score_0_1000 = int(min(1000, max(0, round(nq_val * 10))))
+                        fes.append(fe)
+
+                        f_narrow.write(f"{chrom}\t{peak_s}\t{peak_e}\t{summit_name}\t{score_0_1000}\t.\t{fe:.4f}\t{np_val:.4f}\t{nq_val:.4f}\t{off}\n")
+                        f_summits.write(f"{chrom}\t{abs_summit}\t{abs_summit + 1}\t{summit_name}\t{nq_val:.4f}\n")
+
+        # Sanity validation on generated temporary files
+        assert tmp_narrow.exists() and tmp_narrow.stat().st_size > 1024, f"[FATAL] Generated narrowPeak failed size validation: {tmp_narrow}"
+        assert tmp_summits.exists() and tmp_summits.stat().st_size > 1024, f"[FATAL] Generated summits.bed failed size validation: {tmp_summits}"
+
+        # Verify 10 columns and offset in tmp_narrow
+        with open(tmp_narrow, "r") as vf:
+            for v_line in vf:
+                v_parts = v_line.strip().split("\t")
+                assert len(v_parts) == 10, f"Expected 10 columns in narrowPeak: {v_line}"
+                v_s, v_e, v_off = int(v_parts[1]), int(v_parts[2]), int(v_parts[9])
+                assert 0 <= v_off < (v_e - v_s), f"Invalid offset {v_off} for peak {v_s}-{v_e}"
+
+        # Atomic replacement
+        os.replace(tmp_narrow, out_narrow)
+        os.replace(tmp_summits, out_summits)
+
+        med_w = float(np.median(widths)) if widths else 0.0
+        med_fe = float(np.median(fes)) if fes else 0.0
+        print(f"[SUCCESS] Native peak calling complete: {out_narrow.name}, {out_summits.name}")
+        print(f"    Total Peaks:            {peaks_count:,}")
+        print(f"    Total Summits:          {summits_count:,}")
+        print(f"    Median Peak Width:      {med_w:.1f} bp")
+        print(f"    Median Fold-Enrichment: {med_fe:.2f}x")
+
+    finally:
+        tmp_narrow.unlink(missing_ok=True)
+        tmp_summits.unlink(missing_ok=True)
+
     return out_narrow, out_summits
 
 
@@ -326,7 +845,7 @@ def count_reads_in_summits(
     rel_eps: float = 1.0
 ) -> pd.DataFrame:
     """
-    Quantify early and late blastula read counts in ±window_bp//2 windows around MACS3 summits.
+    Quantify early and late blastula read counts in ±window_bp//2 windows around ATAC summits.
     Computes continuous pre-MZT targets:
       y_abs = log2(cpm_early + 1.0)
       y_rel = log2((cpm_early + rel_eps) / (cpm_late + rel_eps))
@@ -381,7 +900,7 @@ def count_reads_in_summits(
             "end": end,
             "summit": summit,
             "peak_id": peak_id,
-            "macs_score": float(score) if score.replace('.', '', 1).isdigit() else 0.0,
+            "peak_score": float(score) if score.replace('.', '', 1).isdigit() else 0.0,
             "count_early": cnt_early,
             "count_late": cnt_late,
             "cpm_early": round(cpm_early, 4),
@@ -577,7 +1096,7 @@ def main():
     parser.add_argument("--target-genes", nargs="*", default=["notch2", "slc35a3a"], help="Target genes to detect held_out_chr")
     parser.add_argument("--summit-window-bp", type=int, default=500, help="Summit counting window width in bp (default 500, i.e. ±250 bp)")
     parser.add_argument("--rel-eps", type=float, default=1.0, help="Pseudocount eps for y_rel log2 ratio (default 1.0)")
-    parser.add_argument("--genome-size", default=None, help="MACS3 effective genome size (e.g. 1.4e9 for zebrafish, 7.3e8 for medaka)")
+    parser.add_argument("--genome-size", default=None, help="Effective genome size (e.g. 1.4e9 for zebrafish, 7.3e8 for medaka)")
     parser.add_argument("--exclude-housekeeping-promoters", action="store_true", help="Flag housekeeping promoters in summit targets")
     parser.add_argument("--cv-folds", type=int, default=5, help="Number of cross-validation folds (default 5)")
     parser.add_argument("--threads", type=int, default=8, help="Number of CPU threads")
@@ -712,13 +1231,14 @@ def main():
             if len(p) >= 2 and p[1].isdigit():
                 chrom_sizes_dict[p[0]] = int(p[1])
 
-    # 2. Call MACS3 peaks on late stage
-    set_task_progress(work_dir, task_name, "Calling MACS3 peaks on late blastula ATAC")
+    # 2. Call native local-lambda Poisson peaks on late stage
+    set_task_progress(work_dir, task_name, "Calling native local-lambda Poisson peaks on late blastula ATAC")
     peaks_dir = species_dir / "peaks"
-    narrow_peaks, summits_bed = call_peaks_macs3(
+    narrow_peaks, summits_bed = call_peaks_native(
         late_bam=late_bam_path,
         output_dir=peaks_dir,
         species_name=args.species,
+        chrom_sizes=chrom_sizes_dict,
         control_bam=control_bam_path,
         genome_size=args.genome_size
     )
@@ -839,17 +1359,31 @@ def main():
     # Generate BigWigs with LC_ALL=C sorting and safety filtering against chrom.sizes
     for lbl, b_path in [("early", early_bam_path), ("late", late_bam_path)]:
         bw_out = species_dir / f"{args.species}_{lbl}_cpm.bw"
-        if not bw_out.exists() and shutil.which("bedtools") and shutil.which("bedGraphToBigWig"):
+        if is_valid_bw(bw_out):
+            print(f"[+] BigWig track already exists & verified: {bw_out}")
+            continue
+
+        if shutil.which("bedtools") and shutil.which("bedGraphToBigWig"):
+            bw_out.unlink(missing_ok=True)
             bg_tmp = species_dir / f"{lbl}.tmp.bg"
             bg_filtered = species_dir / f"{lbl}.filtered.bg"
-            tot = get_bam_total_reads(b_path)
-            scale = 1e6 / tot
-            run_cmd(f"bedtools genomecov -ibam '{b_path}' -bg -scale {scale} | LC_ALL=C sort -k1,1 -k2,2n > '{bg_tmp}'")
-            run_cmd(f"awk 'NR==FNR {{c[$1]=1; next}} ($1 in c)' '{chrom_sizes}' '{bg_tmp}' > '{bg_filtered}'", desc=f"Filtering {lbl} bedGraph to contigs present in chrom.sizes")
-            run_cmd(f"bedGraphToBigWig '{bg_filtered}' '{chrom_sizes}' '{bw_out}'")
-            bg_tmp.unlink(missing_ok=True)
-            bg_filtered.unlink(missing_ok=True)
-            print(f"[+] BigWig track generated: {bw_out}")
+            tmp_bw = bw_out.with_suffix(".tmp.bw")
+            tmp_bw.unlink(missing_ok=True)
+
+            try:
+                tot = get_bam_total_reads(b_path)
+                scale = 1e6 / tot
+                run_cmd(f"bedtools genomecov -ibam '{b_path}' -bg -scale {scale} | LC_ALL=C sort -k1,1 -k2,2n > '{bg_tmp}'")
+                run_cmd(f"awk 'NR==FNR {{c[$1]=1; next}} ($1 in c)' '{chrom_sizes}' '{bg_tmp}' > '{bg_filtered}'", desc=f"Filtering {lbl} bedGraph to contigs present in chrom.sizes")
+                run_cmd(f"bedGraphToBigWig '{bg_filtered}' '{chrom_sizes}' '{tmp_bw}'")
+                if not is_valid_bw(tmp_bw, min_bytes=0):
+                    raise RuntimeError(f"Generated BigWig {tmp_bw} failed validation.")
+                os.replace(str(tmp_bw), str(bw_out))
+                print(f"[+] BigWig track generated & verified: {bw_out}")
+            finally:
+                bg_tmp.unlink(missing_ok=True)
+                bg_filtered.unlink(missing_ok=True)
+                tmp_bw.unlink(missing_ok=True)
 
     set_task_progress(work_dir, task_name, "100% (Done)")
     print(f"[SUCCESS] Modular ATAC preprocessing completed for {args.species}.")

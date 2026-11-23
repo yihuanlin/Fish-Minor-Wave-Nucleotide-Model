@@ -99,7 +99,7 @@ else
 fi
 
 echo "[*] Checking bioinformatics CLIs..."
-for tool in fastp bowtie2 samtools bedtools featureCounts minimap2 STAR tomtom aria2c macs3; do
+for tool in fastp bowtie2 samtools bedtools featureCounts minimap2 STAR tomtom aria2c; do
     if command -v "${tool}" &> /dev/null; then
         echo "  [+] ${tool}: $(command -v ${tool})"
     else
