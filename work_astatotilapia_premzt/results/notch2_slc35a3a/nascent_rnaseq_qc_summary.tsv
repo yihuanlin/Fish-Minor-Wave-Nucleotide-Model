@@ -1,0 +1,6 @@
+slam_class	n_total	n_clean_nuclear	pct_clean	n_mito	n_maternal_bleedthrough	n_low_baseline_fc	n_collapsing_kinetics
+preMZT_strictly_zygotic	1	1	100.0%	0	0	0	0
+preMZT_maternal_zygotic	52	36	69.2%	0	16	0	0
+major_wave_only	521	122	23.4%	0	370	224	0
+maternal_non_transcribed	6657	37	0.6%	22	6311	1464	444
+silent_or_low	25252	23230	92.0%	19	1397	1151	228

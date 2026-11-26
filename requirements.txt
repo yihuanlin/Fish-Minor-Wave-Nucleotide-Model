@@ -35,6 +35,7 @@ tangermeme
 modisco-lite
 
 # Utilities & interactive environment
+rpy2
 requests
 tqdm
 jupyterlab

@@ -1,0 +1,29 @@
+{
+  "species": "Oryzias_latipes",
+  "fold": "0",
+  "peaks_bed": "/home/home/NucleotideModel/work_astatotilapia_premzt/models/chrombpnet/Oryzias_latipes/fold_0/prep/Oryzias_latipes_late_peaks.primary.narrowPeak",
+  "nonpeaks_bed": "/home/home/NucleotideModel/work_astatotilapia_premzt/models/chrombpnet/Oryzias_latipes/fold_0/prep/nonpeaks.bed",
+  "bias_model": "/home/home/NucleotideModel/work_astatotilapia_premzt/models/chrombpnet/Oryzias_latipes/fold_0/bias_run/models/bias.pt",
+  "checkpoint": "/home/home/NucleotideModel/work_astatotilapia_premzt/models/chrombpnet/Oryzias_latipes/fold_0/models/Oryzias_latipes_nobias.pt",
+  "output_dir": "/home/home/NucleotideModel/work_astatotilapia_premzt/models/chrombpnet/Oryzias_latipes/fold_0",
+  "chrombpnet_run_dir": "/home/home/NucleotideModel/work_astatotilapia_premzt/models/chrombpnet/Oryzias_latipes/fold_0/chrombpnet_run",
+  "qc_metrics": {
+    "count_pearson_r": 0.3930628118221884,
+    "count_spearman_r": 0.42199437636259635,
+    "profile_pearson_r": 0.6430757268486967,
+    "profile_median_jsd": 0.6101177148842266,
+    "nobias_count_pearson_r": 0.39127610176191246,
+    "nobias_profile_pearson_r": 0.32801914657075903,
+    "nobias_profile_median_jsd": 0.7714951397958852,
+    "bias_counts_pearson_r": -0.18344154842326282,
+    "bias_profile_jsd": 0.6865268805401861,
+    "bias_nonpeaks_counts_pearson_r": 0.06625750982880355,
+    "bias_nonpeaks_profile_jsd": 0.7922412032994242,
+    "max_tn5_footprint_response": 0.002,
+    "source_files": {
+      "main": "/home/home/NucleotideModel/work_astatotilapia_premzt/models/chrombpnet/Oryzias_latipes/fold_0/chrombpnet_run/evaluation/chrombpnet_metrics.json",
+      "nobias": "/home/home/NucleotideModel/work_astatotilapia_premzt/models/chrombpnet/Oryzias_latipes/fold_0/chrombpnet_run/evaluation/chrombpnet_nobias_metrics.json",
+      "bias": "/home/home/NucleotideModel/work_astatotilapia_premzt/models/chrombpnet/Oryzias_latipes/fold_0/chrombpnet_run/evaluation/bias_metrics.json"
+    }
+  }
+}

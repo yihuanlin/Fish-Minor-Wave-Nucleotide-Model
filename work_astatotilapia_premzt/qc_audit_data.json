@@ -1,0 +1,327 @@
+{
+  "peak_stats": {
+    "Danio_rerio": {
+      "species": "Danio rerio",
+      "total_peaks": 146778,
+      "median_width": 414.0,
+      "median_fe": 3.1952,
+      "median_q": 13.969,
+      "tss_overlap_pct": 25.920778318276582,
+      "surv_fe3": 82538,
+      "surv_fe5": 34228,
+      "surv_q10": 90507,
+      "surv_both": 49377
+    },
+    "Oryzias_latipes": {
+      "species": "Oryzias latipes",
+      "total_peaks": 12141,
+      "median_width": 227.0,
+      "median_fe": 2.4797,
+      "median_q": 18.3522,
+      "tss_overlap_pct": 45.037476319907746,
+      "surv_fe3": 1658,
+      "surv_fe5": 22,
+      "surv_q10": 10197,
+      "surv_both": 245
+    }
+  },
+  "cbp_stats": {
+    "Danio_rerio": {
+      "species": "Danio_rerio",
+      "full_count_r": 0.7044488866608861,
+      "nobias_count_r": 0.7000818320080586,
+      "full_prof_jsd": 0.6211653575051121,
+      "nobias_prof_jsd": 0.8226132585117993,
+      "drop_count_r": 0.004367054652827496,
+      "bias_peaks_r": -0.143753749496481,
+      "bias_np_r": 0.0953315169481559,
+      "max_bias_response": 0.001,
+      "bias_response_str": "corrected_0.001_0.001/0.001/0.001/0.001/0.001"
+    },
+    "Oryzias_latipes": {
+      "species": "Oryzias_latipes",
+      "full_count_r": 0.3930628118221884,
+      "nobias_count_r": 0.39127610176191246,
+      "full_prof_jsd": 0.6101177148842266,
+      "nobias_prof_jsd": 0.7714951397958852,
+      "drop_count_r": 0.00178671006027592,
+      "bias_peaks_r": -0.18344154842326282,
+      "bias_np_r": 0.06625750982880355,
+      "max_bias_response": 0.002,
+      "bias_response_str": "corrected_0.002_0.002/0.002/0.002/0.002/0.002"
+    }
+  },
+  "sample_stats": [
+    {
+      "species": "Danio_rerio",
+      "stage": "early_256cell",
+      "run_id": "SRR9032650",
+      "layout": "PAIRED",
+      "mapped_reads": 17015578,
+      "mito_pct": 0.0,
+      "unplaced_pct": 1.4070048046560628,
+      "tsse": 3.2556662380517127,
+      "bg_signal": 75.94,
+      "peak_signal": 247.23529411764707
+    },
+    {
+      "species": "Danio_rerio",
+      "stage": "early_256cell",
+      "run_id": "SRR9032651",
+      "layout": "PAIRED",
+      "mapped_reads": 30964342,
+      "mito_pct": 0.0,
+      "unplaced_pct": 1.2820230444425398,
+      "tsse": 3.1121596903745723,
+      "bg_signal": 122.045,
+      "peak_signal": 379.8235294117647
+    },
+    {
+      "species": "Danio_rerio",
+      "stage": "early_merged",
+      "run_id": "DR_early_merged",
+      "layout": "PAIRED",
+      "mapped_reads": 47979920,
+      "mito_pct": 0.0,
+      "unplaced_pct": 1.3263465216282144,
+      "tsse": 3.1622518441929897,
+      "bg_signal": 197.985,
+      "peak_signal": 626.0784313725491
+    },
+    {
+      "species": "Danio_rerio",
+      "stage": "late_dome",
+      "run_id": "SRR9032658",
+      "layout": "PAIRED",
+      "mapped_reads": 27938308,
+      "mito_pct": 0.0,
+      "unplaced_pct": 1.5772179188517785,
+      "tsse": 8.508501439791603,
+      "bg_signal": 137.445,
+      "peak_signal": 1169.450980392157
+    },
+    {
+      "species": "Danio_rerio",
+      "stage": "late_dome",
+      "run_id": "SRR9032659",
+      "layout": "PAIRED",
+      "mapped_reads": 47265590,
+      "mito_pct": 0.0,
+      "unplaced_pct": 1.4687259801475026,
+      "tsse": 6.2517800672888395,
+      "bg_signal": 213.42000000000002,
+      "peak_signal": 1334.2549019607843
+    },
+    {
+      "species": "Danio_rerio",
+      "stage": "late_dome",
+      "run_id": "SRR9032660",
+      "layout": "PAIRED",
+      "mapped_reads": 16700494,
+      "mito_pct": 0.0,
+      "unplaced_pct": 1.6395802423569028,
+      "tsse": 6.187610619469027,
+      "bg_signal": 70.625,
+      "peak_signal": 437.0
+    },
+    {
+      "species": "Danio_rerio",
+      "stage": "late_dome",
+      "run_id": "SRR9032661",
+      "layout": "PAIRED",
+      "mapped_reads": 13254516,
+      "mito_pct": 0.0,
+      "unplaced_pct": 1.444066309173417,
+      "tsse": 5.927920095114887,
+      "bg_signal": 56.155,
+      "peak_signal": 332.88235294117646
+    },
+    {
+      "species": "Danio_rerio",
+      "stage": "late_merged",
+      "run_id": "DR_late_merged",
+      "layout": "PAIRED",
+      "mapped_reads": 105158908,
+      "mito_pct": 0.0,
+      "unplaced_pct": 1.521575328644531,
+      "tsse": 6.85360096995492,
+      "bg_signal": 477.645,
+      "peak_signal": 3273.5882352941176
+    },
+    {
+      "species": "Danio_rerio",
+      "stage": "control_gdna",
+      "run_id": "SRR9032640",
+      "layout": "PAIRED",
+      "mapped_reads": 21036546,
+      "mito_pct": 0.0,
+      "unplaced_pct": 1.346732491160859,
+      "tsse": 1.718474119505622,
+      "bg_signal": 84.4,
+      "peak_signal": 145.0392156862745
+    },
+    {
+      "species": "Oryzias_latipes",
+      "stage": "early_st9",
+      "run_id": "DRR152711",
+      "layout": "SINGLE",
+      "mapped_reads": 10982755,
+      "mito_pct": 0.0,
+      "unplaced_pct": 0.0,
+      "tsse": 1.4451559465807566,
+      "bg_signal": 81.435,
+      "peak_signal": 117.68627450980392
+    },
+    {
+      "species": "Oryzias_latipes",
+      "stage": "early_st9",
+      "run_id": "DRR152712",
+      "layout": "SINGLE",
+      "mapped_reads": 12663729,
+      "mito_pct": 0.0,
+      "unplaced_pct": 0.0,
+      "tsse": 1.3244275173183364,
+      "bg_signal": 92.515,
+      "peak_signal": 122.52941176470588
+    },
+    {
+      "species": "Oryzias_latipes",
+      "stage": "early_st9",
+      "run_id": "DRR152713",
+      "layout": "SINGLE",
+      "mapped_reads": 15607789,
+      "mito_pct": 0.0,
+      "unplaced_pct": 0.0,
+      "tsse": 1.3048981370014152,
+      "bg_signal": 114.095,
+      "peak_signal": 148.88235294117646
+    },
+    {
+      "species": "Oryzias_latipes",
+      "stage": "early_merged",
+      "run_id": "OL_early_merged",
+      "layout": "SINGLE",
+      "mapped_reads": 39254273,
+      "mito_pct": 0.0,
+      "unplaced_pct": 0.0,
+      "tsse": 1.3504834314082867,
+      "bg_signal": 288.045,
+      "peak_signal": 389.0
+    },
+    {
+      "species": "Oryzias_latipes",
+      "stage": "late_st11",
+      "run_id": "DRR152718",
+      "layout": "SINGLE",
+      "mapped_reads": 27792463,
+      "mito_pct": 0.0,
+      "unplaced_pct": 0.0,
+      "tsse": 2.351090189347569,
+      "bg_signal": 233.05,
+      "peak_signal": 547.9215686274509
+    },
+    {
+      "species": "Oryzias_latipes",
+      "stage": "late_st11",
+      "run_id": "DRR152719",
+      "layout": "SINGLE",
+      "mapped_reads": 44636311,
+      "mito_pct": 0.0,
+      "unplaced_pct": 0.0,
+      "tsse": 2.1448926980529706,
+      "bg_signal": 359.23,
+      "peak_signal": 770.5098039215686
+    },
+    {
+      "species": "Oryzias_latipes",
+      "stage": "late_merged",
+      "run_id": "OL_late_merged",
+      "layout": "SINGLE",
+      "mapped_reads": 72428774,
+      "mito_pct": 0.0,
+      "unplaced_pct": 0.0,
+      "tsse": 2.225762324920513,
+      "bg_signal": 592.28,
+      "peak_signal": 1318.2745098039215
+    }
+  ],
+  "split_stats": {
+    "Danio_rerio": {
+      "species": "Danio_rerio",
+      "train_chrs": [
+        "chr15",
+        "chr16",
+        "chr22",
+        "chr24",
+        "chr13",
+        "chr23",
+        "chr6",
+        "chr20",
+        "chr9",
+        "chr14",
+        "chr3",
+        "chr2",
+        "chr25",
+        "chr21",
+        "chr4",
+        "chr5"
+      ],
+      "valid_chrs": [
+        "chr1",
+        "chr12",
+        "chr10"
+      ],
+      "test_chrs": [
+        "chr19",
+        "chr7",
+        "chr8",
+        "chr17",
+        "chr18",
+        "chr11"
+      ],
+      "notch2_status": "chr8 (in_test=True, in_train=False, in_val=False)",
+      "slc35a3a_status": "chr8 (in_test=True, in_train=False, in_val=False)",
+      "top50_chr4": 16,
+      "top50_mir430": 9,
+      "repeat_downweight_count": 0
+    },
+    "Oryzias_latipes": {
+      "species": "Oryzias_latipes",
+      "train_chrs": [
+        "chr19",
+        "chr15",
+        "chr16",
+        "chr7",
+        "chr8",
+        "chr17",
+        "chr13",
+        "chr6",
+        "chr21",
+        "chr9",
+        "chr14",
+        "chr18",
+        "chr3",
+        "chr12",
+        "chr5"
+      ],
+      "valid_chrs": [
+        "chr1",
+        "chr11",
+        "chr10"
+      ],
+      "test_chrs": [
+        "chr24",
+        "chr22",
+        "chr23",
+        "chr20",
+        "chr2",
+        "chr4"
+      ],
+      "notch2_status": "NOT_FOUND",
+      "slc35a3a_status": "chr4 (in_test=True, in_train=False, in_val=False)",
+      "top50_chr4": 0,
+      "top50_mir430": 0,
+      "repeat_downweight_count": 0
+    }
+  }
+}

@@ -1,5 +1,103 @@
-RNA-seq
-work_*
+# ==============================================================================
+# Confidential / External Raw Expression Data & Derived Gene Lists (Excluded)
+# ==============================================================================
+RNA-seq/
 TF_gene_names.txt
-scripts/__pycache__
+*.rds
+
+# ==============================================================================
+# Python / Notebook / Env Scratch Artifacts
+# ==============================================================================
+scripts/__pycache__/
+**/__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
 .env
+
+# ==============================================================================
+# Work Directory: Whitelist Trained Models & Heavy-Compute Outputs Only
+# ==============================================================================
+# Ignore everything under work_* by default, then explicitly un-ignore
+# study config, QC reports, trained checkpoints, and heavy-compute outputs.
+work_*/**
+!work_astatotilapia_premzt/
+!work_astatotilapia_premzt/config.json
+!work_astatotilapia_premzt/qc_audit_report.md
+!work_astatotilapia_premzt/qc_audit_data.json
+
+# --- Block 2-3: ATAC-seq Preprocessing Summaries & Trained ChromBPNet Models ---
+!work_astatotilapia_premzt/atac/
+!work_astatotilapia_premzt/atac/*/
+!work_astatotilapia_premzt/atac/*/*_summit_targets.tsv
+!work_astatotilapia_premzt/atac/*/*.narrowPeak
+!work_astatotilapia_premzt/atac/*/chr_fold*.json
+!work_astatotilapia_premzt/atac/*/chrom.sizes
+!work_astatotilapia_premzt/atac/*/qc_summary.json
+
+!work_astatotilapia_premzt/models/
+!work_astatotilapia_premzt/models/*/
+!work_astatotilapia_premzt/models/zebrafish/**
+!work_astatotilapia_premzt/models/medaka/**
+!work_astatotilapia_premzt/models/chrombpnet/
+!work_astatotilapia_premzt/models/chrombpnet/*/
+!work_astatotilapia_premzt/models/chrombpnet/*/fold_0/
+!work_astatotilapia_premzt/models/chrombpnet/*/fold_0/*.pt
+!work_astatotilapia_premzt/models/chrombpnet/*/fold_0/*.json
+!work_astatotilapia_premzt/models/chrombpnet/*/fold_0/.train.done
+!work_astatotilapia_premzt/models/chrombpnet/*/fold_0/models/
+!work_astatotilapia_premzt/models/chrombpnet/*/fold_0/models/*.pt
+!work_astatotilapia_premzt/models/chrombpnet/*/fold_0/prep/
+!work_astatotilapia_premzt/models/chrombpnet/*/fold_0/prep/chr_fold*.json
+!work_astatotilapia_premzt/models/chrombpnet/*/fold_0/prep/*.narrowPeak
+!work_astatotilapia_premzt/models/chrombpnet/*/fold_0/bias_run/
+!work_astatotilapia_premzt/models/chrombpnet/*/fold_0/bias_run/evaluation/
+!work_astatotilapia_premzt/models/chrombpnet/*/fold_0/bias_run/evaluation/*.json
+!work_astatotilapia_premzt/models/chrombpnet/*/fold_0/bias_run/evaluation/*.png
+!work_astatotilapia_premzt/models/chrombpnet/*/fold_0/bias_run/logs/
+!work_astatotilapia_premzt/models/chrombpnet/*/fold_0/bias_run/logs/*.json
+!work_astatotilapia_premzt/models/chrombpnet/*/fold_0/bias_run/logs/*.tsv
+!work_astatotilapia_premzt/models/chrombpnet/*/fold_0/bias_run/logs/*.log
+!work_astatotilapia_premzt/models/chrombpnet/*/fold_0/chrombpnet_run/
+!work_astatotilapia_premzt/models/chrombpnet/*/fold_0/chrombpnet_run/evaluation/
+!work_astatotilapia_premzt/models/chrombpnet/*/fold_0/chrombpnet_run/evaluation/*.json
+!work_astatotilapia_premzt/models/chrombpnet/*/fold_0/chrombpnet_run/evaluation/*.png
+!work_astatotilapia_premzt/models/chrombpnet/*/fold_0/chrombpnet_run/evaluation/*.txt
+!work_astatotilapia_premzt/models/chrombpnet/*/fold_0/chrombpnet_run/logs/
+!work_astatotilapia_premzt/models/chrombpnet/*/fold_0/chrombpnet_run/logs/*.json
+!work_astatotilapia_premzt/models/chrombpnet/*/fold_0/chrombpnet_run/logs/*.tsv
+!work_astatotilapia_premzt/models/chrombpnet/*/fold_0/chrombpnet_run/logs/*.log
+!work_astatotilapia_premzt/models/chrombpnet/*/fold_0/chrombpnet_run/models/
+!work_astatotilapia_premzt/models/chrombpnet/*/fold_0/chrombpnet_run/models/*.pt
+
+# --- Block 7: Multi-Task NTv3 Checkpoint (Git LFS) & SLAM-seq Processed Tables ---
+!work_astatotilapia_premzt/models/ntv3/
+!work_astatotilapia_premzt/models/ntv3/ntv3_best_checkpoint.pt
+!work_astatotilapia_premzt/models/ntv3/ntv3_train_config.json
+!work_astatotilapia_premzt/models/ntv3/ntv3_baselines_benchmark.tsv
+
+!work_astatotilapia_premzt/slamseq/
+!work_astatotilapia_premzt/slamseq/*.tsv
+!work_astatotilapia_premzt/slamseq/*.json
+!work_astatotilapia_premzt/slamseq/chrom.sizes
+!work_astatotilapia_premzt/slamseq/*.tsv.gz
+
+# --- Public Reference / Motif Databases Derived for Reproducibility (No FASTAs/BAMs) ---
+!work_astatotilapia_premzt/downloads/
+!work_astatotilapia_premzt/downloads/JASPAR2024_CORE_vertebrates_non-redundant.meme
+!work_astatotilapia_premzt/downloads/orthologs_target_to_zf.tsv
+!work_astatotilapia_premzt/downloads/*.json
+!work_astatotilapia_premzt/downloads/*_manifest.tsv
+
+# --- Blocks 4-8c: Locus Outputs, Benchmark Summaries, Ranking Stats & Publication Figures ---
+!work_astatotilapia_premzt/results/
+!work_astatotilapia_premzt/results/*/
+!work_astatotilapia_premzt/results/*/**
+
+# Keep cichlid RNA-seq quantification & raw replicate TPM/CPM tables private
+work_astatotilapia_premzt/rnaseq/
+work_astatotilapia_premzt/results/*/*_gene_sets.tsv
+# Note: target_genes_scored_metrics.tsv (Block 4) and ntv3_target_genes_scored.tsv (Block 8)
+# include merged cichlid RNA-seq expression columns alongside per-gene zero-shot predictions;
+# keep them ignored below to prevent leaking unpublished replicate RNA-seq TPM/CPM values.
+work_astatotilapia_premzt/results/*/target_genes_scored_metrics.tsv
+work_astatotilapia_premzt/results/*/ntv3_target_genes_scored.tsv

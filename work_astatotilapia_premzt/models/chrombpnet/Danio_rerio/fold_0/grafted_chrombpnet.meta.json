@@ -1,0 +1,10 @@
+{
+  "late_open_threshold": 4.8,
+  "early_open_threshold": 3.5,
+  "stage": "Stage 2 Continuous grafted ChromBPNet",
+  "species": "Danio_rerio",
+  "fold": 0,
+  "probe_type": "y_resid",
+  "y_resid_a": 0.4447784749002203,
+  "y_resid_b": -1.2265358837863805
+}

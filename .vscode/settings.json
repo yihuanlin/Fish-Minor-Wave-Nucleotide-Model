@@ -1,0 +1,12 @@
+{
+    "terminal.integrated.profiles.linux": {
+        "Nucleotide": {
+            "path": "bash",
+            "args": [
+                "-c",
+                "screen -d -R nucleotide bash -ic 'conda activate nucleotide; exec bash'"
+            ]
+        }
+    },
+    "terminal.integrated.defaultProfile.linux": "Nucleotide"
+}

@@ -41,10 +41,13 @@ fi
 
 conda activate "${ENV_NAME}"
 
-# 3. Install Bioinformatics CLIs
-echo "[*] Installing bioinformatics CLIs via conda-forge and bioconda..."
+# 3. Install Bioinformatics CLIs and R
+echo "[*] Installing bioinformatics CLIs and R via conda-forge and bioconda..."
 "${CONDA_BIN}" install -y -n "${ENV_NAME}" \
     -c conda-forge -c bioconda \
+    r-base \
+    r-data.table \
+    r-matrix \
     fastp \
     bowtie2 \
     samtools \
@@ -98,8 +101,8 @@ else
     echo "[-] Warning: chrombpnet CLI not found in PATH." >&2
 fi
 
-echo "[*] Checking bioinformatics CLIs..."
-for tool in fastp bowtie2 samtools bedtools featureCounts minimap2 STAR tomtom aria2c; do
+echo "[*] Checking bioinformatics CLIs and R..."
+for tool in Rscript fastp bowtie2 samtools bedtools featureCounts minimap2 STAR tomtom aria2c; do
     if command -v "${tool}" &> /dev/null; then
         echo "  [+] ${tool}: $(command -v ${tool})"
     else

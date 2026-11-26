@@ -1,0 +1,12 @@
+{
+  "MEDAKA_PASSED_QC": false,
+  "promote_medaka": false,
+  "stage1_nobias_count_pearson_r": 0.3931,
+  "min_required_count_pearson_r": 0.5,
+  "stage1_profile_median_jsd": 0.6775,
+  "status": "failed_qc",
+  "reason": "Medaka Stage 1 ChromBPNet test chromosome counts Pearson r reached only 0.3931 (< 0.50). Low SNR (TSSe=1.35/2.23) excluded to prevent 50/50 noise dilution with Zebrafish models.",
+  "allow_low_qc_medaka": false,
+  "checkpoint_status": "diagnostic_only",
+  "zero_shot_medaka_atac_enabled": true
+}

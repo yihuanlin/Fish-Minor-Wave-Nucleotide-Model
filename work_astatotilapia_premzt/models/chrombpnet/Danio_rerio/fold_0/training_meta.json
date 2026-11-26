@@ -1,0 +1,27 @@
+{
+  "species": "Danio_rerio",
+  "fold": "0",
+  "output_dir": "/home/home/NucleotideModel/work_astatotilapia_premzt/models/chrombpnet/Danio_rerio/fold_0",
+  "chrombpnet_run_dir": "/home/home/NucleotideModel/work_astatotilapia_premzt/models/chrombpnet/Danio_rerio/fold_0/chrombpnet_run",
+  "bias_model": "/home/home/NucleotideModel/work_astatotilapia_premzt/models/chrombpnet/Danio_rerio/fold_0/bias_run/models/bias.pt",
+  "qc_metrics": {
+    "count_pearson_r": 0.7044488866608861,
+    "count_spearman_r": 0.6413931293362061,
+    "profile_pearson_r": 0.6520126044103083,
+    "profile_median_jsd": 0.6211653575051121,
+    "nobias_count_pearson_r": 0.7000818320080586,
+    "nobias_profile_pearson_r": 0.20856407486238313,
+    "nobias_profile_median_jsd": 0.8226132585117993,
+    "bias_counts_pearson_r": -0.143753749496481,
+    "bias_profile_jsd": 0.6445928662170969,
+    "bias_nonpeaks_counts_pearson_r": 0.0953315169481559,
+    "bias_nonpeaks_profile_jsd": 0.7985892663036309,
+    "max_tn5_footprint_response": 0.001,
+    "source_files": {
+      "main": "/home/home/NucleotideModel/work_astatotilapia_premzt/models/chrombpnet/Danio_rerio/fold_0/chrombpnet_run/evaluation/chrombpnet_metrics.json",
+      "nobias": "/home/home/NucleotideModel/work_astatotilapia_premzt/models/chrombpnet/Danio_rerio/fold_0/chrombpnet_run/evaluation/chrombpnet_nobias_metrics.json",
+      "bias": "/home/home/NucleotideModel/work_astatotilapia_premzt/models/chrombpnet/Danio_rerio/fold_0/chrombpnet_run/evaluation/bias_metrics.json"
+    }
+  },
+  "checkpoint": "/home/home/NucleotideModel/work_astatotilapia_premzt/models/chrombpnet/Danio_rerio/fold_0/models/Danio_rerio_nobias.pt"
+}

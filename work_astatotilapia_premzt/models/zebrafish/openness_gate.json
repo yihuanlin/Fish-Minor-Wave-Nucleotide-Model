@@ -1,0 +1,32 @@
+{
+  "OPEN_GATE_LATE_THRESH": 5.7,
+  "percentile_used": 15,
+  "source_peaks": "Danio_rerio_late_peaks.narrowPeak (native Poisson peaks)",
+  "held_out_test_chroms": [
+    "chr8",
+    "chr17",
+    "chr18",
+    "chr11",
+    "chr7",
+    "chr19"
+  ],
+  "n_test_highconf_peaks": 12252,
+  "n_peaks_evaluated": 2984,
+  "peak_late_distribution": {
+    "min": 3.465,
+    "p05": 4.403,
+    "p10": 4.591,
+    "p15": 4.707,
+    "p25": 4.891,
+    "p50": 5.336
+  },
+  "background_late_distribution": {
+    "p50": 4.227,
+    "p90": 4.882,
+    "p95": 5.07
+  },
+  "calibrated_at": "2026-11-24",
+  "calibration_method": "Closed-background sanity-checked threshold (<20% silent promoters passing)",
+  "control_silent_passing_pct": 17.3,
+  "notes": "Calibrated against closed background and dome peaks; ensures <20% of silent promoters pass gate."
+}

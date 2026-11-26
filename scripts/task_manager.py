@@ -17,6 +17,12 @@ Features:
 
 import os
 import sys
+from pathlib import Path
+
+# Ensure repo root is on sys.path
+repo_root = Path(__file__).resolve().parent.parent
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
 import time
 import json
 import signal
@@ -334,6 +340,7 @@ class TaskManager:
         args_hash = hashlib.sha256(args_payload.encode()).hexdigest()[:16]
 
         run_env = os.environ.copy()
+        run_env["PYTHONPATH"] = f".:{run_env.get('PYTHONPATH', '')}".rstrip(":")
         if env_vars:
             run_env.update(env_vars)
 
@@ -347,6 +354,7 @@ class TaskManager:
                 f.write(f"echo $$ > \"{task_dir}/pid.txt\"\n")
                 f.write("set -o pipefail\n")
                 f.write(f"export PATH=\"{bin_dir}:$PATH\"\n")
+                f.write("export PYTHONPATH=\".:$PYTHONPATH\"\n")
                 f.write(f"cd \"{Path.cwd().resolve()}\"\n")
                 f.write(f"echo \"[TASK START] $(date)\" >> \"{log_file}\"\n")
 

@@ -40,6 +40,9 @@ from scripts.infer_and_attribute import (
     score_cross_species_medaka_atac,
     sanitize_for_torch_save,
 )
+from scripts.premzt_inference import get_inference_context
+
+VALIDATION_WINDOWS = ["promoter_1kb", "promoter_intron1_capped", "proximal_5kb", "bounded_25kb"]
 
 # ==============================================================================
 # CLI Arguments
@@ -67,8 +70,12 @@ def parse_args():
         help="Disable Medaka model evaluation"
     )
     parser.add_argument(
-        "--task-name", type=str, default="zero_shoot_zeroshot_validation",
+        "--task-name", type=str, default="zero_shoot_validation",
         help="TaskManager task name"
+    )
+    parser.add_argument(
+        "--open-gate-late-thresh", type=float, default=None,
+        help="Empirical openness gate threshold for late accessibility (default: read from openness_gate.json or 4.70)"
     )
     # Upgraded Block 4 controls, windows, and ceiling options
     parser.add_argument(
@@ -88,8 +95,8 @@ def parse_args():
         help="Max number of GC-matched silent control genes to sample"
     )
     parser.add_argument(
-        "--windows", type=str, default="promoter_1kb,proximal_5kb,bounded_25kb",
-        help="Comma-separated scoring windows: promoter_1kb,proximal_5kb,bounded_25kb"
+        "--windows", type=str, default="promoter_1kb,promoter_intron1_capped,proximal_5kb,bounded_25kb",
+        help="Comma-separated scoring windows: promoter_1kb,promoter_intron1_capped,proximal_5kb,bounded_25kb"
     )
     parser.add_argument(
         "--strict-early-max-tpm", type=float, default=0.2,
@@ -873,6 +880,8 @@ def get_window_centers(
     window_name: str,
     neighbor_idx: Dict[str, np.ndarray],
     stride_bp: int = 250,
+    intron1: Optional[Tuple[int, int]] = None,
+    intron1_cap_bp: int = 10000,
 ) -> List[int]:
     """Return 0-based center coordinates to score for a gene under the requested window spec."""
     if window_name == "promoter_1kb":
@@ -881,6 +890,25 @@ def get_window_centers(
             lo, hi = tss - 250, tss + 500
         else:
             lo, hi = tss - 500, tss + 250
+        centers = list(range(lo, hi + 1, stride_bp))
+        if tss not in centers:
+            centers.append(tss)
+        return sorted(set(centers))
+
+    if window_name == "promoter_intron1_capped":
+        # Strand-aware TSS - 2kb to min(first_intron_end, TSS + 10kb); fallback TSS ± 2kb
+        if intron1 is not None:
+            i_st, i_en = intron1
+            if str(strand) == "-":
+                lo = max(i_st, tss - intron1_cap_bp)
+                hi = tss + 2000
+            else:
+                lo = tss - 2000
+                hi = min(i_en, tss + intron1_cap_bp)
+        else:
+            lo, hi = tss - 2000, tss + 2000
+        if lo > hi:
+            lo, hi = hi, lo
         centers = list(range(lo, hi + 1, stride_bp))
         if tss not in centers:
             centers.append(tss)
@@ -932,12 +960,14 @@ def score_multi_windows(
     stride_bp: int,
     batch_size: int,
     device: str,
+    open_gate_late_thresh: float = 4.70,
     work_dir: Optional[Path] = None,
     task_name: Optional[str] = None,
 ) -> pd.DataFrame:
     """
     Score all genes across every requested window using a single pass over unique
-    (chrom, center) coordinates for efficiency.
+    (chrom, center) coordinates for efficiency. Computes openness-gated y_rel_gated
+    strictly on windows with late >= open_gate_late_thresh.
     """
     iface = detect_grafted_interface(
         grafted_model, genome, genome_fa_path, gene_df, window_bp=window_bp, device=device
@@ -965,6 +995,11 @@ def score_multi_windows(
             out_df[f"pred_{w}_y_abs"] = df_w["pred_max_y_abs"].values
             out_df[f"pred_{w}_y_rel"] = df_w["pred_max_y_rel"].values
             out_df[f"pred_{w}_late"] = df_w["pred_max_late"].values
+            out_df[f"pred_{w}_y_rel_gated"] = np.where(
+                df_w["pred_max_late"].values >= open_gate_late_thresh,
+                df_w["pred_max_y_rel"].values,
+                np.nan
+            )
         return out_df
 
     # Collect unique (chrom, center) windows across all requested window specs
@@ -972,12 +1007,32 @@ def score_multi_windows(
     unique_coords: List[Tuple[str, int]] = []
     gene_window_indices: Dict[str, List[List[int]]] = {w: [] for w in windows}
 
+    intron1_map: Dict[str, Tuple[int, int]] = {}
+    if "promoter_intron1_capped" in windows and work_dir:
+        try:
+            ctx = get_inference_context(work_dir=work_dir, device=device)
+            sp_key = "Danio_rerio" if ("Danio" in str(genome_fa_path) or "danRer" in str(genome_fa_path)) else None
+            gtf_info = ctx.get_gtf_data(sp_key)
+            g_dict = gtf_info["genes"]
+            for _, r_g in out_df.iterrows():
+                gid = str(r_g.get("gene_id", r_g.get("Geneid", ""))).lower()
+                gname = str(r_g.get("gene_name", "")).lower()
+                g_rec = g_dict.get(gid) or g_dict.get(gname)
+                if g_rec and g_rec.intron1:
+                    if gid: intron1_map[gid] = g_rec.intron1
+                    if gname: intron1_map[gname] = g_rec.intron1
+        except Exception as e_i1:
+            print(f"[-] Notice loading intron1 annotations: {e_i1}")
+
     for _, row in out_df.iterrows():
         chrom = str(row["chrom"])
         tss = int(row["tss"])
         strand = str(row.get("strand", "+"))
+        gid = str(row.get("gene_id", row.get("Geneid", ""))).lower()
+        gname = str(row.get("gene_name", "")).lower()
+        i1 = intron1_map.get(gid) or intron1_map.get(gname)
         for w in windows:
-            centers = get_window_centers(chrom, tss, strand, w, neighbor_idx, stride_bp=stride_bp)
+            centers = get_window_centers(chrom, tss, strand, w, neighbor_idx, stride_bp=stride_bp, intron1=i1)
             idxs = []
             for c in centers:
                 key = (chrom, c)
@@ -1011,6 +1066,7 @@ def score_multi_windows(
     for w in windows:
         w_abs = np.full(len(out_df), np.nan, dtype=np.float32)
         w_rel = np.full(len(out_df), np.nan, dtype=np.float32)
+        w_rel_gated = np.full(len(out_df), np.nan, dtype=np.float32)
         w_late = np.full(len(out_df), np.nan, dtype=np.float32)
         for g_i, idxs in enumerate(gene_window_indices[w]):
             if idxs:
@@ -1018,8 +1074,14 @@ def score_multi_windows(
                 w_abs[g_i] = float(np.nanmax(all_abs[idx_arr]))
                 w_rel[g_i] = float(np.nanmax(all_rel[idx_arr]))
                 w_late[g_i] = float(np.nanmax(all_late[idx_arr]))
+                open_mask = all_late[idx_arr] >= open_gate_late_thresh
+                if np.any(open_mask):
+                    w_rel_gated[g_i] = float(np.nanmax(all_rel[idx_arr][open_mask]))
+                else:
+                    w_rel_gated[g_i] = np.nan
         out_df[f"pred_{w}_y_abs"] = w_abs
         out_df[f"pred_{w}_y_rel"] = w_rel
+        out_df[f"pred_{w}_y_rel_gated"] = w_rel_gated
         out_df[f"pred_{w}_late"] = w_late
 
     return out_df
@@ -1060,6 +1122,7 @@ def run_zebrafish_ceiling_benchmark(
     windows: List[str],
     batch_size: int,
     device: str,
+    open_gate_late_thresh: float = 4.70,
 ) -> Optional[Dict[str, Any]]:
     """
     Evaluate Zebrafish-trained grafted models on empirical Zebrafish minor-wave vs. silent genes
@@ -1210,14 +1273,15 @@ def run_zebrafish_ceiling_benchmark(
                 stride_bp=250,
                 batch_size=batch_size,
                 device=device,
+                open_gate_late_thresh=open_gate_late_thresh,
             )
         )
 
     df_zf_scored = fold_dfs[0].copy()
     for w in windows:
-        for s_type in ("y_abs", "y_rel", "late"):
+        for s_type in ("y_abs", "y_rel", "y_rel_gated", "late"):
             col = f"pred_{w}_{s_type}"
-            df_zf_scored[col] = np.mean([f[col].values for f in fold_dfs], axis=0)
+            df_zf_scored[col] = np.nanmean([f[col].values for f in fold_dfs], axis=0)
 
     ceiling_res: Dict[str, Any] = {
         "_source": source_tag,
@@ -1229,12 +1293,12 @@ def run_zebrafish_ceiling_benchmark(
     neg_m = df_zf_scored["is_zf_pos"] == False
     for w in windows:
         ceiling_res[w] = {}
-        for s_type in ("y_abs", "y_rel", "late"):
+        for s_type in ("y_abs", "y_rel", "y_rel_gated", "late"):
             ceiling_res[w][s_type] = compute_binary_metrics(df_zf_scored, pos_m, neg_m, f"pred_{w}_{s_type}")
         print(
             f"    [ZF Ceiling | {w:<12}] "
             f"y_abs AUC={ceiling_res[w]['y_abs']['roc_auc']:.3f} | "
-            f"y_rel AUC={ceiling_res[w]['y_rel']['roc_auc']:.3f} | "
+            f"y_rel_gated AUC={ceiling_res[w]['y_rel_gated']['roc_auc']:.3f} | "
             f"late AUC={ceiling_res[w]['late']['roc_auc']:.3f}",
             flush=True,
         )
@@ -1264,11 +1328,33 @@ def main():
     target_gtf = study_cfg.get("TARGET_GTF")
     medaka_genome_fa = study_cfg.get("MEDAKA_GENOME_FA")
     ensemble_medaka = bool(study_cfg.get("ENSEMBLE_MEDAKA_WITH_ZF", False))
-    enable_medaka = args.enable_medaka if args.enable_medaka is not None else bool(study_cfg.get("ENABLE_MEDAKA", True))
+
+    medaka_passed_qc = bool(study_cfg.get("MEDAKA_PASSED_QC", False))
+    qc_status_path = work_dir / "models" / "medaka" / "qc_status.json"
+    if qc_status_path.exists():
+        try:
+            with open(qc_status_path) as f_qc:
+                medaka_passed_qc = bool(json.load(f_qc).get("MEDAKA_PASSED_QC", medaka_passed_qc))
+        except Exception:
+            pass
+
+    enable_medaka = (args.enable_medaka if args.enable_medaka is not None else bool(study_cfg.get("ENABLE_MEDAKA", True))) and medaka_passed_qc
+
+    open_gate_thresh = args.open_gate_late_thresh
+    if open_gate_thresh is None:
+        open_gate_thresh = float(study_cfg.get("OPEN_GATE_LATE_THRESH", study_cfg.get("LATE_OPEN_THRESHOLD", 4.70)))
+        og_path = work_dir / "models" / "zebrafish" / "openness_gate.json"
+        if og_path.exists():
+            try:
+                with open(og_path) as f_og:
+                    open_gate_thresh = float(json.load(f_og).get("OPEN_GATE_LATE_THRESH", open_gate_thresh))
+            except Exception:
+                pass
+    print(f"[*] Openness Gate threshold (late): {open_gate_thresh:.2f} | Medaka QC passed: {medaka_passed_qc}")
 
     windows = [w.strip() for w in args.windows.split(",") if w.strip()]
     if not windows:
-        windows = ["promoter_1kb", "proximal_5kb", "bounded_25kb"]
+        windows = list(VALIDATION_WINDOWS)
 
     res_dir = work_dir / "results" / target_locus_name
     res_dir.mkdir(parents=True, exist_ok=True)
@@ -1366,6 +1452,7 @@ def main():
             stride_bp=250,
             batch_size=args.batch_size,
             device=device,
+            open_gate_late_thresh=open_gate_thresh,
             work_dir=work_dir,
             task_name=task_name,
         )
@@ -1373,9 +1460,9 @@ def main():
 
     df_scored = scored_zf_folds[0].copy()
     for w in windows:
-        for s_type in ("y_abs", "y_rel", "late"):
+        for s_type in ("y_abs", "y_rel", "y_rel_gated", "late"):
             col = f"pred_{w}_{s_type}"
-            df_scored[col] = np.mean([f[col].values for f in scored_zf_folds], axis=0)
+            df_scored[col] = np.nanmean([f[col].values for f in scored_zf_folds], axis=0)
             df_scored[f"{col}_zf"] = df_scored[col]
 
     # Optional Medaka evaluation
@@ -1403,15 +1490,16 @@ def main():
                 stride_bp=250,
                 batch_size=args.batch_size,
                 device=device,
+                open_gate_late_thresh=open_gate_thresh,
                 work_dir=work_dir,
                 task_name=task_name,
             )
             med_folds_scored.append(df_mf)
 
         for w in windows:
-            for s_type in ("y_abs", "y_rel", "late"):
+            for s_type in ("y_abs", "y_rel", "y_rel_gated", "late"):
                 col = f"pred_{w}_{s_type}"
-                med_vals = np.mean([f[col].values for f in med_folds_scored], axis=0)
+                med_vals = np.nanmean([f[col].values for f in med_folds_scored], axis=0)
                 df_scored[f"{col}_medaka"] = med_vals
                 df_scored[f"{col}_consensus"] = 0.5 * (df_scored[f"{col}_zf"] + med_vals)
                 if ensemble_medaka:
@@ -1421,7 +1509,7 @@ def main():
 
     # Populate legacy pred_max_* columns from primary window (promoter_1kb if present, else windows[0])
     primary_w = "promoter_1kb" if "promoter_1kb" in windows else windows[0]
-    for s_type in ("y_abs", "y_rel", "late"):
+    for s_type in ("y_abs", "y_rel", "y_rel_gated", "late"):
         df_scored[f"pred_max_{s_type}"] = df_scored[f"pred_{primary_w}_{s_type}"]
         df_scored[f"pred_max_{s_type}_zf"] = df_scored[f"pred_{primary_w}_{s_type}_zf"]
         if grafted_medaka_models:
@@ -1466,7 +1554,7 @@ def main():
                 if c_mask.sum() == 0:
                     continue
                 metrics_by_window[m_label][w][ctrl_name] = {}
-                for s_type in ("y_abs", "y_rel", "late"):
+                for s_type in ("y_abs", "y_rel", "y_rel_gated", "late"):
                     col = f"pred_{w}_{s_type}{suffix}"
                     res_s = {
                         p_name: compute_binary_metrics(df_scored, p_mask, c_mask, col)
@@ -1479,7 +1567,7 @@ def main():
                 print(
                     f"    [{w:<12} | vs {active_primary_ctrl}] "
                     f"SZ-HighConf y_abs={pc['y_abs']['strictly_zygotic_highconf']['roc_auc']:.3f}, "
-                    f"y_rel={pc['y_rel']['strictly_zygotic_highconf']['roc_auc']:.3f}, "
+                    f"y_rel_gated={pc['y_rel_gated']['strictly_zygotic_highconf']['roc_auc']:.3f}, "
                     f"late={pc['late']['strictly_zygotic_highconf']['roc_auc']:.3f} | "
                     f"SZ-All y_abs={pc['y_abs']['strictly_zygotic']['roc_auc']:.3f}"
                 )
@@ -1499,6 +1587,7 @@ def main():
                 windows=windows,
                 batch_size=args.batch_size,
                 device=device,
+                open_gate_late_thresh=open_gate_thresh,
             )
         except Exception as e_zf:
             print(f"[-] Notice evaluating Zebrafish ceiling: {e_zf}")
@@ -1536,6 +1625,8 @@ def main():
         "primary_control": active_primary_ctrl,
         "diagnostic_control": args.diagnostic_control,
         "ensemble_medaka_with_zf": ensemble_medaka,
+        "open_gate_late_thresh": open_gate_thresh,
+        "medaka_passed_qc": medaka_passed_qc,
         "metrics": metrics_report,
         "metrics_by_window": metrics_by_window,
         "zebrafish_ceiling": zebrafish_ceiling,

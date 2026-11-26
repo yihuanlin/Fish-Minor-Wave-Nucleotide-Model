@@ -1,0 +1,1271 @@
+{
+  "target_locus_name": "notch2_slc35a3a",
+  "n_genes_scored": 33378,
+  "windows": [
+    "promoter_1kb",
+    "promoter_intron1_capped",
+    "proximal_5kb",
+    "bounded_25kb"
+  ],
+  "primary_window": "promoter_1kb",
+  "primary_control": "control_silent",
+  "diagnostic_control": "control_non_activated",
+  "ensemble_medaka_with_zf": false,
+  "open_gate_late_thresh": 5.7,
+  "medaka_passed_qc": false,
+  "metrics": {
+    "Zebrafish_only": {
+      "y_abs": {
+        "strictly_zygotic_highconf": {
+          "roc_auc": 0.6790766965787998,
+          "pr_auc": 0.009730790711238769,
+          "p_value": 5.967893230263144e-06,
+          "n_pos": 50,
+          "n_ctrl": 14264
+        },
+        "strictly_zygotic": {
+          "roc_auc": 0.6854812662440257,
+          "pr_auc": 0.0748452698876014,
+          "p_value": 5.605193857299268e-44,
+          "n_pos": 481,
+          "n_ctrl": 14264
+        },
+        "slam_confirmed": {
+          "roc_auc": 0.859104930403304,
+          "pr_auc": 0.011100104358357508,
+          "p_value": 1.8605025616125204e-05,
+          "n_pos": 11,
+          "n_ctrl": 14264
+        },
+        "all_upregulated": {
+          "roc_auc": 0.7473729022362358,
+          "pr_auc": 0.40081823421468216,
+          "p_value": 0.0,
+          "n_pos": 3213,
+          "n_ctrl": 14264
+        }
+      },
+      "y_rel": {
+        "strictly_zygotic_highconf": {
+          "roc_auc": 0.5298625911385305,
+          "pr_auc": 0.004794656133032389,
+          "p_value": 0.23264537751674652,
+          "n_pos": 50,
+          "n_ctrl": 14264
+        },
+        "strictly_zygotic": {
+          "roc_auc": 0.496745073301439,
+          "pr_auc": 0.037225775008003496,
+          "p_value": 0.5960825085639954,
+          "n_pos": 481,
+          "n_ctrl": 14264
+        },
+        "slam_confirmed": {
+          "roc_auc": 0.5526340947330852,
+          "pr_auc": 0.001318998268932339,
+          "p_value": 0.2727784812450409,
+          "n_pos": 11,
+          "n_ctrl": 14264
+        },
+        "all_upregulated": {
+          "roc_auc": 0.46782606293592405,
+          "pr_auc": 0.18472219943647394,
+          "p_value": 1.0,
+          "n_pos": 3213,
+          "n_ctrl": 14264
+        }
+      },
+      "y_rel_gated": {
+        "strictly_zygotic_highconf": {
+          "roc_auc": 0.48056028014007,
+          "pr_auc": 0.01282436409623627,
+          "p_value": 0.6310782432556152,
+          "n_pos": 25,
+          "n_ctrl": 1999
+        },
+        "strictly_zygotic": {
+          "roc_auc": 0.46885996646391864,
+          "pr_auc": 0.09715998559732483,
+          "p_value": 0.940382719039917,
+          "n_pos": 233,
+          "n_ctrl": 1999
+        },
+        "slam_confirmed": {
+          "roc_auc": 0.5641392124633745,
+          "pr_auc": 0.00460999095125311,
+          "p_value": 0.2788209319114685,
+          "n_pos": 7,
+          "n_ctrl": 1999
+        },
+        "all_upregulated": {
+          "roc_auc": 0.4393041010721633,
+          "pr_auc": 0.43900716975952225,
+          "p_value": 1.0,
+          "n_pos": 1942,
+          "n_ctrl": 1999
+        }
+      },
+      "late": {
+        "strictly_zygotic_highconf": {
+          "roc_auc": 0.7318690409422322,
+          "pr_auc": 0.015407603742616375,
+          "p_value": 7.124071998987347e-09,
+          "n_pos": 50,
+          "n_ctrl": 14264
+        },
+        "strictly_zygotic": {
+          "roc_auc": 0.7369458958073652,
+          "pr_auc": 0.10689106896685986,
+          "p_value": 0.0,
+          "n_pos": 481,
+          "n_ctrl": 14264
+        },
+        "slam_confirmed": {
+          "roc_auc": 0.8890085657472084,
+          "pr_auc": 0.04239417148324784,
+          "p_value": 3.94448898077826e-06,
+          "n_pos": 11,
+          "n_ctrl": 14264
+        },
+        "all_upregulated": {
+          "roc_auc": 0.8128741416801031,
+          "pr_auc": 0.5319938093519597,
+          "p_value": 0.0,
+          "n_pos": 3213,
+          "n_ctrl": 14264
+        }
+      }
+    }
+  },
+  "metrics_by_window": {
+    "Zebrafish_only": {
+      "promoter_1kb": {
+        "control_silent": {
+          "y_abs": {
+            "strictly_zygotic_highconf": {
+              "roc_auc": 0.6790766965787998,
+              "pr_auc": 0.009730790711238769,
+              "p_value": 5.967893230263144e-06,
+              "n_pos": 50,
+              "n_ctrl": 14264
+            },
+            "strictly_zygotic": {
+              "roc_auc": 0.6854812662440257,
+              "pr_auc": 0.0748452698876014,
+              "p_value": 5.605193857299268e-44,
+              "n_pos": 481,
+              "n_ctrl": 14264
+            },
+            "slam_confirmed": {
+              "roc_auc": 0.859104930403304,
+              "pr_auc": 0.011100104358357508,
+              "p_value": 1.8605025616125204e-05,
+              "n_pos": 11,
+              "n_ctrl": 14264
+            },
+            "all_upregulated": {
+              "roc_auc": 0.7473729022362358,
+              "pr_auc": 0.40081823421468216,
+              "p_value": 0.0,
+              "n_pos": 3213,
+              "n_ctrl": 14264
+            }
+          },
+          "y_rel": {
+            "strictly_zygotic_highconf": {
+              "roc_auc": 0.5298625911385305,
+              "pr_auc": 0.004794656133032389,
+              "p_value": 0.23264537751674652,
+              "n_pos": 50,
+              "n_ctrl": 14264
+            },
+            "strictly_zygotic": {
+              "roc_auc": 0.496745073301439,
+              "pr_auc": 0.037225775008003496,
+              "p_value": 0.5960825085639954,
+              "n_pos": 481,
+              "n_ctrl": 14264
+            },
+            "slam_confirmed": {
+              "roc_auc": 0.5526340947330852,
+              "pr_auc": 0.001318998268932339,
+              "p_value": 0.2727784812450409,
+              "n_pos": 11,
+              "n_ctrl": 14264
+            },
+            "all_upregulated": {
+              "roc_auc": 0.46782606293592405,
+              "pr_auc": 0.18472219943647394,
+              "p_value": 1.0,
+              "n_pos": 3213,
+              "n_ctrl": 14264
+            }
+          },
+          "y_rel_gated": {
+            "strictly_zygotic_highconf": {
+              "roc_auc": 0.48056028014007,
+              "pr_auc": 0.01282436409623627,
+              "p_value": 0.6310782432556152,
+              "n_pos": 25,
+              "n_ctrl": 1999
+            },
+            "strictly_zygotic": {
+              "roc_auc": 0.46885996646391864,
+              "pr_auc": 0.09715998559732483,
+              "p_value": 0.940382719039917,
+              "n_pos": 233,
+              "n_ctrl": 1999
+            },
+            "slam_confirmed": {
+              "roc_auc": 0.5641392124633745,
+              "pr_auc": 0.00460999095125311,
+              "p_value": 0.2788209319114685,
+              "n_pos": 7,
+              "n_ctrl": 1999
+            },
+            "all_upregulated": {
+              "roc_auc": 0.4393041010721633,
+              "pr_auc": 0.43900716975952225,
+              "p_value": 1.0,
+              "n_pos": 1942,
+              "n_ctrl": 1999
+            }
+          },
+          "late": {
+            "strictly_zygotic_highconf": {
+              "roc_auc": 0.7318690409422322,
+              "pr_auc": 0.015407603742616375,
+              "p_value": 7.124071998987347e-09,
+              "n_pos": 50,
+              "n_ctrl": 14264
+            },
+            "strictly_zygotic": {
+              "roc_auc": 0.7369458958073652,
+              "pr_auc": 0.10689106896685986,
+              "p_value": 0.0,
+              "n_pos": 481,
+              "n_ctrl": 14264
+            },
+            "slam_confirmed": {
+              "roc_auc": 0.8890085657472084,
+              "pr_auc": 0.04239417148324784,
+              "p_value": 3.94448898077826e-06,
+              "n_pos": 11,
+              "n_ctrl": 14264
+            },
+            "all_upregulated": {
+              "roc_auc": 0.8128741416801031,
+              "pr_auc": 0.5319938093519597,
+              "p_value": 0.0,
+              "n_pos": 3213,
+              "n_ctrl": 14264
+            }
+          }
+        },
+        "control_non_activated": {
+          "y_abs": {
+            "strictly_zygotic_highconf": {
+              "roc_auc": 0.46833376792698833,
+              "pr_auc": 0.012559273437811797,
+              "p_value": 0.7795379757881165,
+              "n_pos": 50,
+              "n_ctrl": 3835
+            },
+            "strictly_zygotic": {
+              "roc_auc": 0.45096672241391933,
+              "pr_auc": 0.10060160211880483,
+              "p_value": 0.9997769594192505,
+              "n_pos": 481,
+              "n_ctrl": 3835
+            },
+            "slam_confirmed": {
+              "roc_auc": 0.6716249851843072,
+              "pr_auc": 0.009887390132617135,
+              "p_value": 0.024496765807271004,
+              "n_pos": 11,
+              "n_ctrl": 3835
+            },
+            "all_upregulated": {
+              "roc_auc": 0.5128339442397268,
+              "pr_auc": 0.4672857600480134,
+              "p_value": 0.03152831643819809,
+              "n_pos": 3213,
+              "n_ctrl": 3835
+            }
+          },
+          "y_rel": {
+            "strictly_zygotic_highconf": {
+              "roc_auc": 0.5569439374185137,
+              "pr_auc": 0.017918789026053917,
+              "p_value": 0.08293557912111282,
+              "n_pos": 50,
+              "n_ctrl": 3835
+            },
+            "strictly_zygotic": {
+              "roc_auc": 0.5342729049378332,
+              "pr_auc": 0.1269848071314177,
+              "p_value": 0.007060632109642029,
+              "n_pos": 481,
+              "n_ctrl": 3835
+            },
+            "slam_confirmed": {
+              "roc_auc": 0.5915728339457154,
+              "pr_auc": 0.004569513147771191,
+              "p_value": 0.14678628742694855,
+              "n_pos": 11,
+              "n_ctrl": 3835
+            },
+            "all_upregulated": {
+              "roc_auc": 0.5080382377491052,
+              "pr_auc": 0.46283135200148434,
+              "p_value": 0.12217427045106888,
+              "n_pos": 3213,
+              "n_ctrl": 3835
+            }
+          },
+          "y_rel_gated": {
+            "strictly_zygotic_highconf": {
+              "roc_auc": 0.5588737351517818,
+              "pr_auc": 0.017920860796116322,
+              "p_value": 0.1553412526845932,
+              "n_pos": 25,
+              "n_ctrl": 2273
+            },
+            "strictly_zygotic": {
+              "roc_auc": 0.5457582858297347,
+              "pr_auc": 0.11722938247854067,
+              "p_value": 0.010615741834044456,
+              "n_pos": 233,
+              "n_ctrl": 2273
+            },
+            "slam_confirmed": {
+              "roc_auc": 0.6553013638363396,
+              "pr_auc": 0.00598867146235613,
+              "p_value": 0.07771977037191391,
+              "n_pos": 7,
+              "n_ctrl": 2273
+            },
+            "all_upregulated": {
+              "roc_auc": 0.5174729495900245,
+              "pr_auc": 0.4739854831968476,
+              "p_value": 0.025084299966692924,
+              "n_pos": 1942,
+              "n_ctrl": 2273
+            }
+          },
+          "late": {
+            "strictly_zygotic_highconf": {
+              "roc_auc": 0.4313272490221643,
+              "pr_auc": 0.011418885681694512,
+              "p_value": 0.952666699886322,
+              "n_pos": 50,
+              "n_ctrl": 3835
+            },
+            "strictly_zygotic": {
+              "roc_auc": 0.4176853415445332,
+              "pr_auc": 0.09195987254244223,
+              "p_value": 1.0,
+              "n_pos": 481,
+              "n_ctrl": 3835
+            },
+            "slam_confirmed": {
+              "roc_auc": 0.6449211805144008,
+              "pr_auc": 0.01183202105038222,
+              "p_value": 0.048212286084890366,
+              "n_pos": 11,
+              "n_ctrl": 3835
+            },
+            "all_upregulated": {
+              "roc_auc": 0.5106412549084534,
+              "pr_auc": 0.4663821547203793,
+              "p_value": 0.06161898747086525,
+              "n_pos": 3213,
+              "n_ctrl": 3835
+            }
+          }
+        }
+      },
+      "promoter_intron1_capped": {
+        "control_silent": {
+          "y_abs": {
+            "strictly_zygotic_highconf": {
+              "roc_auc": 0.7089841559169938,
+              "pr_auc": 0.008351173028092414,
+              "p_value": 1.6100166533306037e-07,
+              "n_pos": 50,
+              "n_ctrl": 14264
+            },
+            "strictly_zygotic": {
+              "roc_auc": 0.6853411988717653,
+              "pr_auc": 0.06340529507523066,
+              "p_value": 6.445972935894159e-44,
+              "n_pos": 481,
+              "n_ctrl": 14264
+            },
+            "slam_confirmed": {
+              "roc_auc": 0.813704558201193,
+              "pr_auc": 0.005582417154289876,
+              "p_value": 0.00015741982497274876,
+              "n_pos": 11,
+              "n_ctrl": 14264
+            },
+            "all_upregulated": {
+              "roc_auc": 0.7232721078086621,
+              "pr_auc": 0.343430721820009,
+              "p_value": 0.0,
+              "n_pos": 3213,
+              "n_ctrl": 14264
+            }
+          },
+          "y_rel": {
+            "strictly_zygotic_highconf": {
+              "roc_auc": 0.5544524677509814,
+              "pr_auc": 0.004810715275980689,
+              "p_value": 0.09152428060770035,
+              "n_pos": 50,
+              "n_ctrl": 14264
+            },
+            "strictly_zygotic": {
+              "roc_auc": 0.5563193267904429,
+              "pr_auc": 0.040587962789952345,
+              "p_value": 1.286405404243851e-05,
+              "n_pos": 481,
+              "n_ctrl": 14264
+            },
+            "slam_confirmed": {
+              "roc_auc": 0.5654157956457451,
+              "pr_auc": 0.0010227932118146868,
+              "p_value": 0.22625833749771118,
+              "n_pos": 11,
+              "n_ctrl": 14264
+            },
+            "all_upregulated": {
+              "roc_auc": 0.5289839139369839,
+              "pr_auc": 0.1991990090463065,
+              "p_value": 1.3634084439217986e-07,
+              "n_pos": 3213,
+              "n_ctrl": 14264
+            }
+          },
+          "y_rel_gated": {
+            "strictly_zygotic_highconf": {
+              "roc_auc": 0.5775532111464043,
+              "pr_auc": 0.009973332795599078,
+              "p_value": 0.07477087527513504,
+              "n_pos": 29,
+              "n_ctrl": 3919
+            },
+            "strictly_zygotic": {
+              "roc_auc": 0.5168324103639235,
+              "pr_auc": 0.0725102715928049,
+              "p_value": 0.16672557592391968,
+              "n_pos": 296,
+              "n_ctrl": 3919
+            },
+            "slam_confirmed": {
+              "roc_auc": 0.5764509086785178,
+              "pr_auc": 0.0027878832578723802,
+              "p_value": 0.213788703083992,
+              "n_pos": 9,
+              "n_ctrl": 3919
+            },
+            "all_upregulated": {
+              "roc_auc": 0.492829858752288,
+              "pr_auc": 0.3485452409401491,
+              "p_value": 0.8281373977661133,
+              "n_pos": 2310,
+              "n_ctrl": 3919
+            }
+          },
+          "late": {
+            "strictly_zygotic_highconf": {
+              "roc_auc": 0.7090731912507011,
+              "pr_auc": 0.009914472912388332,
+              "p_value": 1.5863612645716785e-07,
+              "n_pos": 50,
+              "n_ctrl": 14264
+            },
+            "strictly_zygotic": {
+              "roc_auc": 0.7276743394241993,
+              "pr_auc": 0.07924573576431337,
+              "p_value": 0.0,
+              "n_pos": 481,
+              "n_ctrl": 14264
+            },
+            "slam_confirmed": {
+              "roc_auc": 0.8563898944577576,
+              "pr_auc": 0.013953811170931722,
+              "p_value": 2.1245534298941493e-05,
+              "n_pos": 11,
+              "n_ctrl": 14264
+            },
+            "all_upregulated": {
+              "roc_auc": 0.7883699781401936,
+              "pr_auc": 0.4474303589646043,
+              "p_value": 0.0,
+              "n_pos": 3213,
+              "n_ctrl": 14264
+            }
+          }
+        },
+        "control_non_activated": {
+          "y_abs": {
+            "strictly_zygotic_highconf": {
+              "roc_auc": 0.5034315514993482,
+              "pr_auc": 0.013292638232874793,
+              "p_value": 0.46675047278404236,
+              "n_pos": 50,
+              "n_ctrl": 3835
+            },
+            "strictly_zygotic": {
+              "roc_auc": 0.4702924968896286,
+              "pr_auc": 0.10481822188451337,
+              "p_value": 0.9833040237426758,
+              "n_pos": 481,
+              "n_ctrl": 3835
+            },
+            "slam_confirmed": {
+              "roc_auc": 0.6676899371814626,
+              "pr_auc": 0.007255527643768853,
+              "p_value": 0.027207428589463234,
+              "n_pos": 11,
+              "n_ctrl": 3835
+            },
+            "all_upregulated": {
+              "roc_auc": 0.5143544945140159,
+              "pr_auc": 0.4638137376010064,
+              "p_value": 0.01880704239010811,
+              "n_pos": 3213,
+              "n_ctrl": 3835
+            }
+          },
+          "y_rel": {
+            "strictly_zygotic_highconf": {
+              "roc_auc": 0.5353272490221643,
+              "pr_auc": 0.017104504553783477,
+              "p_value": 0.1950085163116455,
+              "n_pos": 50,
+              "n_ctrl": 3835
+            },
+            "strictly_zygotic": {
+              "roc_auc": 0.537422308478371,
+              "pr_auc": 0.12711335808929328,
+              "p_value": 0.003684349125251174,
+              "n_pos": 481,
+              "n_ctrl": 3835
+            },
+            "slam_confirmed": {
+              "roc_auc": 0.5415194974517008,
+              "pr_auc": 0.0034274628401653384,
+              "p_value": 0.316984623670578,
+              "n_pos": 11,
+              "n_ctrl": 3835
+            },
+            "all_upregulated": {
+              "roc_auc": 0.5103924287373939,
+              "pr_auc": 0.46061113539081067,
+              "p_value": 0.06614132225513458,
+              "n_pos": 3213,
+              "n_ctrl": 3835
+            }
+          },
+          "y_rel_gated": {
+            "strictly_zygotic_highconf": {
+              "roc_auc": 0.5970472466020407,
+              "pr_auc": 0.02174444014578738,
+              "p_value": 0.035904232412576675,
+              "n_pos": 29,
+              "n_ctrl": 2707
+            },
+            "strictly_zygotic": {
+              "roc_auc": 0.5339148254275702,
+              "pr_auc": 0.1205013330184799,
+              "p_value": 0.027509383857250214,
+              "n_pos": 296,
+              "n_ctrl": 2707
+            },
+            "slam_confirmed": {
+              "roc_auc": 0.5998235028526864,
+              "pr_auc": 0.004329233391570893,
+              "p_value": 0.15027016401290894,
+              "n_pos": 9,
+              "n_ctrl": 2707
+            },
+            "all_upregulated": {
+              "roc_auc": 0.5094070687347377,
+              "pr_auc": 0.46147955389011674,
+              "p_value": 0.1250014752149582,
+              "n_pos": 2310,
+              "n_ctrl": 2707
+            }
+          },
+          "late": {
+            "strictly_zygotic_highconf": {
+              "roc_auc": 0.42654237288135594,
+              "pr_auc": 0.011560085141597301,
+              "p_value": 0.9630929231643677,
+              "n_pos": 50,
+              "n_ctrl": 3835
+            },
+            "strictly_zygotic": {
+              "roc_auc": 0.42690505167689,
+              "pr_auc": 0.09382828247359248,
+              "p_value": 0.9999999403953552,
+              "n_pos": 481,
+              "n_ctrl": 3835
+            },
+            "slam_confirmed": {
+              "roc_auc": 0.6511200663743036,
+              "pr_auc": 0.012872953370250724,
+              "p_value": 0.04149506613612175,
+              "n_pos": 11,
+              "n_ctrl": 3835
+            },
+            "all_upregulated": {
+              "roc_auc": 0.5106845113824177,
+              "pr_auc": 0.4650911774526285,
+              "p_value": 0.06085464358329773,
+              "n_pos": 3213,
+              "n_ctrl": 3835
+            }
+          }
+        }
+      },
+      "proximal_5kb": {
+        "control_silent": {
+          "y_abs": {
+            "strictly_zygotic_highconf": {
+              "roc_auc": 0.6587724340998317,
+              "pr_auc": 0.005931766616444871,
+              "p_value": 5.1728409744100645e-05,
+              "n_pos": 50,
+              "n_ctrl": 14264
+            },
+            "strictly_zygotic": {
+              "roc_auc": 0.6378581410479897,
+              "pr_auc": 0.049940957172356595,
+              "p_value": 3.470535867066147e-25,
+              "n_pos": 481,
+              "n_ctrl": 14264
+            },
+            "slam_confirmed": {
+              "roc_auc": 0.8493155050221792,
+              "pr_auc": 0.005444949964694087,
+              "p_value": 3.0130437153275125e-05,
+              "n_pos": 11,
+              "n_ctrl": 14264
+            },
+            "all_upregulated": {
+              "roc_auc": 0.6670755997918579,
+              "pr_auc": 0.28569219680578056,
+              "p_value": 0.0,
+              "n_pos": 3213,
+              "n_ctrl": 14264
+            }
+          },
+          "y_rel": {
+            "strictly_zygotic_highconf": {
+              "roc_auc": 0.5390234155916994,
+              "pr_auc": 0.004292162312105025,
+              "p_value": 0.16999882459640503,
+              "n_pos": 50,
+              "n_ctrl": 14264
+            },
+            "strictly_zygotic": {
+              "roc_auc": 0.5274712052964997,
+              "pr_auc": 0.03570970798267651,
+              "p_value": 0.02004961296916008,
+              "n_pos": 481,
+              "n_ctrl": 14264
+            },
+            "slam_confirmed": {
+              "roc_auc": 0.49587327282924587,
+              "pr_auc": 0.0007998683240002841,
+              "p_value": 0.5189147591590881,
+              "n_pos": 11,
+              "n_ctrl": 14264
+            },
+            "all_upregulated": {
+              "roc_auc": 0.5004288435633493,
+              "pr_auc": 0.1821130992239836,
+              "p_value": 0.4696846008300781,
+              "n_pos": 3213,
+              "n_ctrl": 14264
+            }
+          },
+          "y_rel_gated": {
+            "strictly_zygotic_highconf": {
+              "roc_auc": 0.5336575724693846,
+              "pr_auc": 0.006512802218295866,
+              "p_value": 0.24273909628391266,
+              "n_pos": 36,
+              "n_ctrl": 6451
+            },
+            "strictly_zygotic": {
+              "roc_auc": 0.5143823906824156,
+              "pr_auc": 0.05195442847918386,
+              "p_value": 0.1823422908782959,
+              "n_pos": 349,
+              "n_ctrl": 6451
+            },
+            "slam_confirmed": {
+              "roc_auc": 0.5700899085413115,
+              "pr_auc": 0.001833534492567102,
+              "p_value": 0.22152309119701385,
+              "n_pos": 10,
+              "n_ctrl": 6451
+            },
+            "all_upregulated": {
+              "roc_auc": 0.5107835786592155,
+              "pr_auc": 0.27269746638554804,
+              "p_value": 0.05550080165266991,
+              "n_pos": 2536,
+              "n_ctrl": 6451
+            }
+          },
+          "late": {
+            "strictly_zygotic_highconf": {
+              "roc_auc": 0.6997952888390353,
+              "pr_auc": 0.008564599387487663,
+              "p_value": 5.142765644450265e-07,
+              "n_pos": 50,
+              "n_ctrl": 14264
+            },
+            "strictly_zygotic": {
+              "roc_auc": 0.6881133959793522,
+              "pr_auc": 0.0651158399207598,
+              "p_value": 2.802596928649634e-45,
+              "n_pos": 481,
+              "n_ctrl": 14264
+            },
+            "slam_confirmed": {
+              "roc_auc": 0.8632220975883342,
+              "pr_auc": 0.028133615142229354,
+              "p_value": 1.5092905414348934e-05,
+              "n_pos": 11,
+              "n_ctrl": 14264
+            },
+            "all_upregulated": {
+              "roc_auc": 0.7390784209863916,
+              "pr_auc": 0.3802055886736219,
+              "p_value": 0.0,
+              "n_pos": 3213,
+              "n_ctrl": 14264
+            }
+          }
+        },
+        "control_non_activated": {
+          "y_abs": {
+            "strictly_zygotic_highconf": {
+              "roc_auc": 0.49191395045632336,
+              "pr_auc": 0.012450236636826633,
+              "p_value": 0.5780209302902222,
+              "n_pos": 50,
+              "n_ctrl": 3835
+            },
+            "strictly_zygotic": {
+              "roc_auc": 0.4727374250190417,
+              "pr_auc": 0.10249427079028486,
+              "p_value": 0.9745472073554993,
+              "n_pos": 481,
+              "n_ctrl": 3835
+            },
+            "slam_confirmed": {
+              "roc_auc": 0.7377740903164632,
+              "pr_auc": 0.009464674443132112,
+              "p_value": 0.0031907232478260994,
+              "n_pos": 11,
+              "n_ctrl": 3835
+            },
+            "all_upregulated": {
+              "roc_auc": 0.5077638066670968,
+              "pr_auc": 0.45665447441431173,
+              "p_value": 0.13040462136268616,
+              "n_pos": 3213,
+              "n_ctrl": 3835
+            }
+          },
+          "y_rel": {
+            "strictly_zygotic_highconf": {
+              "roc_auc": 0.5386023468057366,
+              "pr_auc": 0.0156582701650597,
+              "p_value": 0.17379137873649597,
+              "n_pos": 50,
+              "n_ctrl": 3835
+            },
+            "strictly_zygotic": {
+              "roc_auc": 0.5282118142613579,
+              "pr_auc": 0.12013963092418319,
+              "p_value": 0.02168257161974907,
+              "n_pos": 481,
+              "n_ctrl": 3835
+            },
+            "slam_confirmed": {
+              "roc_auc": 0.493469242621785,
+              "pr_auc": 0.0029177949396182318,
+              "p_value": 0.5299136638641357,
+              "n_pos": 11,
+              "n_ctrl": 3835
+            },
+            "all_upregulated": {
+              "roc_auc": 0.5018032999089829,
+              "pr_auc": 0.45110237582998813,
+              "p_value": 0.3969813287258148,
+              "n_pos": 3213,
+              "n_ctrl": 3835
+            }
+          },
+          "y_rel_gated": {
+            "strictly_zygotic_highconf": {
+              "roc_auc": 0.518950887839964,
+              "pr_auc": 0.015172206209590759,
+              "p_value": 0.34776660799980164,
+              "n_pos": 36,
+              "n_ctrl": 2966
+            },
+            "strictly_zygotic": {
+              "roc_auc": 0.4984914996512529,
+              "pr_auc": 0.10927132746006386,
+              "p_value": 0.5367925763130188,
+              "n_pos": 349,
+              "n_ctrl": 2966
+            },
+            "slam_confirmed": {
+              "roc_auc": 0.5500674308833445,
+              "pr_auc": 0.003825255638543388,
+              "p_value": 0.2920985817909241,
+              "n_pos": 10,
+              "n_ctrl": 2966
+            },
+            "all_upregulated": {
+              "roc_auc": 0.49276593719355644,
+              "pr_auc": 0.44891311907326387,
+              "p_value": 0.822903037071228,
+              "n_pos": 2536,
+              "n_ctrl": 2966
+            }
+          },
+          "late": {
+            "strictly_zygotic_highconf": {
+              "roc_auc": 0.454354628422425,
+              "pr_auc": 0.0120845056503985,
+              "p_value": 0.8667011260986328,
+              "n_pos": 50,
+              "n_ctrl": 3835
+            },
+            "strictly_zygotic": {
+              "roc_auc": 0.4424241110029898,
+              "pr_auc": 0.09853474500135569,
+              "p_value": 0.9999813437461853,
+              "n_pos": 481,
+              "n_ctrl": 3835
+            },
+            "slam_confirmed": {
+              "roc_auc": 0.7186796254592865,
+              "pr_auc": 0.03218363541409153,
+              "p_value": 0.006058500148355961,
+              "n_pos": 11,
+              "n_ctrl": 3835
+            },
+            "all_upregulated": {
+              "roc_auc": 0.5095914941378551,
+              "pr_auc": 0.46315044367170927,
+              "p_value": 0.08236425369977951,
+              "n_pos": 3213,
+              "n_ctrl": 3835
+            }
+          }
+        }
+      },
+      "bounded_25kb": {
+        "control_silent": {
+          "y_abs": {
+            "strictly_zygotic_highconf": {
+              "roc_auc": 0.7345043466068424,
+              "pr_auc": 0.0070179718545562,
+              "p_value": 4.902253714078597e-09,
+              "n_pos": 50,
+              "n_ctrl": 14264
+            },
+            "strictly_zygotic": {
+              "roc_auc": 0.633307919097319,
+              "pr_auc": 0.04835266033315705,
+              "p_value": 1.1256081129477658e-23,
+              "n_pos": 481,
+              "n_ctrl": 14264
+            },
+            "slam_confirmed": {
+              "roc_auc": 0.7069290776525774,
+              "pr_auc": 0.002657071668396976,
+              "p_value": 0.008739577606320381,
+              "n_pos": 11,
+              "n_ctrl": 14264
+            },
+            "all_upregulated": {
+              "roc_auc": 0.6531021815468881,
+              "pr_auc": 0.2643866516533754,
+              "p_value": 0.0,
+              "n_pos": 3213,
+              "n_ctrl": 14264
+            }
+          },
+          "y_rel": {
+            "strictly_zygotic_highconf": {
+              "roc_auc": 0.5972244812114414,
+              "pr_auc": 0.0047872156027125735,
+              "p_value": 0.008720703423023224,
+              "n_pos": 50,
+              "n_ctrl": 14264
+            },
+            "strictly_zygotic": {
+              "roc_auc": 0.5360264650085177,
+              "pr_auc": 0.03524407967777885,
+              "p_value": 0.003551415866240859,
+              "n_pos": 481,
+              "n_ctrl": 14264
+            },
+            "slam_confirmed": {
+              "roc_auc": 0.39340297251822776,
+              "pr_auc": 0.0006349773774862941,
+              "p_value": 0.8895695805549622,
+              "n_pos": 11,
+              "n_ctrl": 14264
+            },
+            "all_upregulated": {
+              "roc_auc": 0.5098845015665642,
+              "pr_auc": 0.18022466870025408,
+              "p_value": 0.03976728022098541,
+              "n_pos": 3213,
+              "n_ctrl": 14264
+            }
+          },
+          "y_rel_gated": {
+            "strictly_zygotic_highconf": {
+              "roc_auc": 0.5619310323572356,
+              "pr_auc": 0.007642891150211075,
+              "p_value": 0.08548041433095932,
+              "n_pos": 41,
+              "n_ctrl": 6331
+            },
+            "strictly_zygotic": {
+              "roc_auc": 0.5078632685106897,
+              "pr_auc": 0.05008670798884359,
+              "p_value": 0.3123329281806946,
+              "n_pos": 340,
+              "n_ctrl": 6331
+            },
+            "slam_confirmed": {
+              "roc_auc": 0.5677223187490128,
+              "pr_auc": 0.001526966344662316,
+              "p_value": 0.2536735534667969,
+              "n_pos": 8,
+              "n_ctrl": 6331
+            },
+            "all_upregulated": {
+              "roc_auc": 0.4790573454620979,
+              "pr_auc": 0.2529420061767551,
+              "p_value": 0.998832643032074,
+              "n_pos": 2439,
+              "n_ctrl": 6331
+            }
+          },
+          "late": {
+            "strictly_zygotic_highconf": {
+              "roc_auc": 0.7564014301738643,
+              "pr_auc": 0.008923762255655195,
+              "p_value": 1.803422827739709e-10,
+              "n_pos": 50,
+              "n_ctrl": 14264
+            },
+            "strictly_zygotic": {
+              "roc_auc": 0.679443794068023,
+              "pr_auc": 0.06038402642112872,
+              "p_value": 2.637383839705738e-41,
+              "n_pos": 481,
+              "n_ctrl": 14264
+            },
+            "slam_confirmed": {
+              "roc_auc": 0.7505608524957936,
+              "pr_auc": 0.011044609846778733,
+              "p_value": 0.002001871122047305,
+              "n_pos": 11,
+              "n_ctrl": 14264
+            },
+            "all_upregulated": {
+              "roc_auc": 0.7248201580127285,
+              "pr_auc": 0.3596230244554228,
+              "p_value": 0.0,
+              "n_pos": 3213,
+              "n_ctrl": 14264
+            }
+          }
+        },
+        "control_non_activated": {
+          "y_abs": {
+            "strictly_zygotic_highconf": {
+              "roc_auc": 0.5892698826597131,
+              "pr_auc": 0.015619083663241252,
+              "p_value": 0.01491786539554596,
+              "n_pos": 50,
+              "n_ctrl": 3835
+            },
+            "strictly_zygotic": {
+              "roc_auc": 0.49224263878761926,
+              "pr_auc": 0.10925282446086078,
+              "p_value": 0.7107295393943787,
+              "n_pos": 481,
+              "n_ctrl": 3835
+            },
+            "slam_confirmed": {
+              "roc_auc": 0.6102998696219035,
+              "pr_auc": 0.005919709343764198,
+              "p_value": 0.10290449857711792,
+              "n_pos": 11,
+              "n_ctrl": 3835
+            },
+            "all_upregulated": {
+              "roc_auc": 0.5147644571373384,
+              "pr_auc": 0.4623201459652763,
+              "p_value": 0.016241002827882767,
+              "n_pos": 3213,
+              "n_ctrl": 3835
+            }
+          },
+          "y_rel": {
+            "strictly_zygotic_highconf": {
+              "roc_auc": 0.6025267275097783,
+              "pr_auc": 0.018762525363677857,
+              "p_value": 0.006301075220108032,
+              "n_pos": 50,
+              "n_ctrl": 3835
+            },
+            "strictly_zygotic": {
+              "roc_auc": 0.5419866260804984,
+              "pr_auc": 0.12444619035230525,
+              "p_value": 0.0013211381155997515,
+              "n_pos": 481,
+              "n_ctrl": 3835
+            },
+            "slam_confirmed": {
+              "roc_auc": 0.39805618110702856,
+              "pr_auc": 0.0023748185666749764,
+              "p_value": 0.8789128661155701,
+              "n_pos": 11,
+              "n_ctrl": 3835
+            },
+            "all_upregulated": {
+              "roc_auc": 0.5154783512709733,
+              "pr_auc": 0.4579620874043753,
+              "p_value": 0.01248775701969862,
+              "n_pos": 3213,
+              "n_ctrl": 3835
+            }
+          },
+          "y_rel_gated": {
+            "strictly_zygotic_highconf": {
+              "roc_auc": 0.5863813996537717,
+              "pr_auc": 0.020770505549024397,
+              "p_value": 0.028588222339749336,
+              "n_pos": 41,
+              "n_ctrl": 2846
+            },
+            "strictly_zygotic": {
+              "roc_auc": 0.5292505477243603,
+              "pr_auc": 0.11988915323789076,
+              "p_value": 0.03873433545231819,
+              "n_pos": 340,
+              "n_ctrl": 2846
+            },
+            "slam_confirmed": {
+              "roc_auc": 0.5969123330990864,
+              "pr_auc": 0.003627998057314261,
+              "p_value": 0.17160725593566895,
+              "n_pos": 8,
+              "n_ctrl": 2846
+            },
+            "all_upregulated": {
+              "roc_auc": 0.4991897881030813,
+              "pr_auc": 0.45481429695951386,
+              "p_value": 0.5405088663101196,
+              "n_pos": 2439,
+              "n_ctrl": 2846
+            }
+          },
+          "late": {
+            "strictly_zygotic_highconf": {
+              "roc_auc": 0.5237783572359844,
+              "pr_auc": 0.013630011852753102,
+              "p_value": 0.28142082691192627,
+              "n_pos": 50,
+              "n_ctrl": 3835
+            },
+            "strictly_zygotic": {
+              "roc_auc": 0.4561138111333679,
+              "pr_auc": 0.10159816085169449,
+              "p_value": 0.9991638660430908,
+              "n_pos": 481,
+              "n_ctrl": 3835
+            },
+            "slam_confirmed": {
+              "roc_auc": 0.6138319307810833,
+              "pr_auc": 0.013052756232675307,
+              "p_value": 0.09580672532320023,
+              "n_pos": 11,
+              "n_ctrl": 3835
+            },
+            "all_upregulated": {
+              "roc_auc": 0.5152221804265674,
+              "pr_auc": 0.46933080979341174,
+              "p_value": 0.013729149475693703,
+              "n_pos": 3213,
+              "n_ctrl": 3835
+            }
+          }
+        }
+      }
+    }
+  },
+  "zebrafish_ceiling": {
+    "_source": "empirical_slamseq_test_chroms",
+    "_test_chroms": [
+      "11",
+      "17",
+      "18",
+      "19",
+      "7",
+      "8"
+    ],
+    "_n_pos": 16,
+    "_n_neg": 80,
+    "promoter_1kb": {
+      "y_abs": {
+        "roc_auc": 0.644921875,
+        "pr_auc": 0.3929620198327413,
+        "p_value": 0.03446256369352341,
+        "n_pos": 16,
+        "n_ctrl": 80
+      },
+      "y_rel": {
+        "roc_auc": 0.403125,
+        "pr_auc": 0.2521801766464162,
+        "p_value": 0.8895220160484314,
+        "n_pos": 16,
+        "n_ctrl": 80
+      },
+      "y_rel_gated": {
+        "roc_auc": 0.5472222222222223,
+        "pr_auc": 0.5186929396139922,
+        "p_value": 0.3506094217300415,
+        "n_pos": 10,
+        "n_ctrl": 18
+      },
+      "late": {
+        "roc_auc": 0.7578125,
+        "pr_auc": 0.36274116958690034,
+        "p_value": 0.0005975095555186272,
+        "n_pos": 16,
+        "n_ctrl": 80
+      }
+    },
+    "promoter_intron1_capped": {
+      "y_abs": {
+        "roc_auc": 0.6187500000000001,
+        "pr_auc": 0.39033563506832547,
+        "p_value": 0.06817127019166946,
+        "n_pos": 16,
+        "n_ctrl": 80
+      },
+      "y_rel": {
+        "roc_auc": 0.4890625,
+        "pr_auc": 0.29795109902530315,
+        "p_value": 0.5566814541816711,
+        "n_pos": 16,
+        "n_ctrl": 80
+      },
+      "y_rel_gated": {
+        "roc_auc": 0.5386363636363636,
+        "pr_auc": 0.48082771584132744,
+        "p_value": 0.37246349453926086,
+        "n_pos": 10,
+        "n_ctrl": 22
+      },
+      "late": {
+        "roc_auc": 0.719921875,
+        "pr_auc": 0.37460883252323474,
+        "p_value": 0.0028628811705857515,
+        "n_pos": 16,
+        "n_ctrl": 80
+      }
+    },
+    "proximal_5kb": {
+      "y_abs": {
+        "roc_auc": 0.48515625,
+        "pr_auc": 0.3494815193368417,
+        "p_value": 0.5760267376899719,
+        "n_pos": 16,
+        "n_ctrl": 80
+      },
+      "y_rel": {
+        "roc_auc": 0.39453124999999994,
+        "pr_auc": 0.2494385225241422,
+        "p_value": 0.9086201190948486,
+        "n_pos": 16,
+        "n_ctrl": 80
+      },
+      "y_rel_gated": {
+        "roc_auc": 0.522,
+        "pr_auc": 0.4530375307189823,
+        "p_value": 0.4275510311126709,
+        "n_pos": 10,
+        "n_ctrl": 25
+      },
+      "late": {
+        "roc_auc": 0.6832031249999999,
+        "pr_auc": 0.30209359635526895,
+        "p_value": 0.0106886588037014,
+        "n_pos": 16,
+        "n_ctrl": 80
+      }
+    },
+    "bounded_25kb": {
+      "y_abs": {
+        "roc_auc": 0.460546875,
+        "pr_auc": 0.34585326520843857,
+        "p_value": 0.6919900178909302,
+        "n_pos": 16,
+        "n_ctrl": 80
+      },
+      "y_rel": {
+        "roc_auc": 0.37382812499999996,
+        "pr_auc": 0.17387764328944036,
+        "p_value": 0.9443971514701843,
+        "n_pos": 16,
+        "n_ctrl": 80
+      },
+      "y_rel_gated": {
+        "roc_auc": 0.44490358126721763,
+        "pr_auc": 0.35488860623907836,
+        "p_value": 0.7107744216918945,
+        "n_pos": 11,
+        "n_ctrl": 33
+      },
+      "late": {
+        "roc_auc": 0.633984375,
+        "pr_auc": 0.2566215841085792,
+        "p_value": 0.046297233551740646,
+        "n_pos": 16,
+        "n_ctrl": 80
+      }
+    }
+  },
+  "medaka_st9_atac": {
+    "spearman_r": 0.3874267849023516,
+    "roc_auc": 0.7113045149508183
+  },
+  "medaka_cross_species_atac": {
+    "medaka_st9_spearman_r": 0.3874267849023516,
+    "medaka_st9_spearman_p": 0.0,
+    "medaka_st9_auroc": 0.7113045149508183,
+    "medaka_rel_spearman_r": 0.02376977336715521
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "late_reads_in_peaks": 28432450,
+  "late_frip": 0.2703760484085666,
+  "late_merged_reads": 105158908,
+  "mito_read_pct": 0.0,
+  "early_tss_enrichment": 3.16,
+  "late_tss_enrichment": 6.85
+}

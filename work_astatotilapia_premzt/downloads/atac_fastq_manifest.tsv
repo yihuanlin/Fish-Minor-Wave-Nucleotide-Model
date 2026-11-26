@@ -1,0 +1,13 @@
+species	stage	accession	run_id	fastq_r1	fastq_r2	layout
+Danio_rerio	early_256cell	GSM3756599	SRR9032650	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Danio_rerio/fastqs/SRR9032650_1.fastq.gz	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Danio_rerio/fastqs/SRR9032650_2.fastq.gz	PAIRED
+Danio_rerio	early_256cell	GSM3756600	SRR9032651	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Danio_rerio/fastqs/SRR9032651_1.fastq.gz	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Danio_rerio/fastqs/SRR9032651_2.fastq.gz	PAIRED
+Danio_rerio	late_dome	GSM3756603	SRR9032658	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Danio_rerio/fastqs/SRR9032658_1.fastq.gz	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Danio_rerio/fastqs/SRR9032658_2.fastq.gz	PAIRED
+Danio_rerio	late_dome	GSM3756604	SRR9032659	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Danio_rerio/fastqs/SRR9032659_1.fastq.gz	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Danio_rerio/fastqs/SRR9032659_2.fastq.gz	PAIRED
+Danio_rerio	late_dome	GSM3756605	SRR9032660	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Danio_rerio/fastqs/SRR9032660_1.fastq.gz	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Danio_rerio/fastqs/SRR9032660_2.fastq.gz	PAIRED
+Danio_rerio	late_dome	GSM3756605	SRR9032661	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Danio_rerio/fastqs/SRR9032661_1.fastq.gz	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Danio_rerio/fastqs/SRR9032661_2.fastq.gz	PAIRED
+Danio_rerio	control_gdna	SRR9032640	SRR9032640	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Danio_rerio/fastqs/SRR9032640_1.fastq.gz	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Danio_rerio/fastqs/SRR9032640_2.fastq.gz	PAIRED
+Oryzias_latipes	early_st9	DRX143405	DRR152711	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Oryzias_latipes/fastqs/DRR152711.fastq.gz		SINGLE
+Oryzias_latipes	early_st9	DRX143406	DRR152712	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Oryzias_latipes/fastqs/DRR152712.fastq.gz		SINGLE
+Oryzias_latipes	early_st9	DRX143407	DRR152713	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Oryzias_latipes/fastqs/DRR152713.fastq.gz		SINGLE
+Oryzias_latipes	late_st11	DRX143412	DRR152718	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Oryzias_latipes/fastqs/DRR152718.fastq.gz		SINGLE
+Oryzias_latipes	late_st11	DRX143413	DRR152719	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Oryzias_latipes/fastqs/DRR152719.fastq.gz		SINGLE

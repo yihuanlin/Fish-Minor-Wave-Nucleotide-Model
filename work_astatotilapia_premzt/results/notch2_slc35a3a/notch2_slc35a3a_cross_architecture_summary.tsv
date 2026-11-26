@@ -1,0 +1,5 @@
+model	architecture	atac_256cell_spearman_r	early_vs_late_auroc	medaka_st9_auroc	medaka_qc_status	atac_auroc_vs_silent	atac_auprc_vs_silent	atac_auroc_vs_non_activated	atac_auprc_vs_non_activated	slam_auroc_vs_silent	slam_auprc_vs_silent	slam_auroc_vs_non_activated	slam_auprc_vs_non_activated	status
+ChromBPNet_grafted	BPNet_CNN	0.6573	0.9807	0.7113	FAILED Stage 1 QC (MEDAKA_PASSED_QC=False; zero-shot cross-species benchmark only)	0.6925	0.3228	0.4342	0.3448	N/A (ATAC-only)	N/A (ATAC-only)	N/A (ATAC-only)	N/A (ATAC-only)	evaluated
+NTv3_raw_pretrained	Transformer_65k_pretrained_native	0.0704	0.5356	N/A (no task head)	N/A (no head)	N/A (no task head)	N/A (no task head)	N/A (no task head)	N/A (no task head)	N/A (no task head)	N/A (no task head)	N/A (no task head)	N/A (no task head)	evaluated
+NTv3_frozen_head	Transformer_65k_frozen_trunk	0.6741	0.8758	0.6611	Cross-species test	0.672	0.315	0.4244	0.331	0.495	0.241	0.4897	0.32	evaluated
+NTv3_multitask_lora	Transformer_65k_lora	0.8457	0.9553	0.7264	Cross-species test	0.7546	0.3474	0.4501	0.3434	0.54	0.2651	0.5649	0.3887	evaluated

@@ -1,0 +1,25 @@
+window	score	score_type	control	pos_set	n_pos	n_ctrl	roc_auc	pr_auc	p_val
+promoter_1kb	y_abs	y_abs	control_silent	strictly_zygotic_highconf	83	14245	0.693	0.016	6.05e-10
+promoter_1kb	y_abs	y_abs	control_non_activated	strictly_zygotic_highconf	83	3820	0.47	0.021	8.26e-01
+promoter_1kb	y_resid_gated (late>=5.7)	y_resid_gated	control_silent	strictly_zygotic_highconf	42	1999	0.5	0.021	4.97e-01
+promoter_1kb	y_resid_gated (late>=5.7)	y_resid_gated	control_non_activated	strictly_zygotic_highconf	42	2273	0.608	0.028	8.32e-03
+promoter_1kb	late	late	control_silent	strictly_zygotic_highconf	83	14245	0.737	0.026	4.16e-14
+promoter_1kb	late	late	control_non_activated	strictly_zygotic_highconf	83	3820	0.437	0.019	9.75e-01
+promoter_intron1_capped	y_abs	y_abs	control_silent	strictly_zygotic_highconf	83	14245	0.71	0.014	1.78e-11
+promoter_intron1_capped	y_abs	y_abs	control_non_activated	strictly_zygotic_highconf	83	3820	0.503	0.022	4.66e-01
+promoter_intron1_capped	y_resid_gated (late>=5.7)	y_resid_gated	control_silent	strictly_zygotic_highconf	52	3919	0.536	0.015	1.86e-01
+promoter_intron1_capped	y_resid_gated (late>=5.7)	y_resid_gated	control_non_activated	strictly_zygotic_highconf	52	2707	0.591	0.032	1.23e-02
+promoter_intron1_capped	late	late	control_silent	strictly_zygotic_highconf	83	14245	0.731	0.018	1.72e-13
+promoter_intron1_capped	late	late	control_non_activated	strictly_zygotic_highconf	83	3820	0.454	0.019	9.25e-01
+proximal_5kb	y_abs	y_abs	control_silent	strictly_zygotic_highconf	83	14245	0.678	0.011	1.03e-08
+proximal_5kb	y_abs	y_abs	control_non_activated	strictly_zygotic_highconf	83	3820	0.513	0.022	3.39e-01
+proximal_5kb	y_resid_gated (late>=5.7)	y_resid_gated	control_silent	strictly_zygotic_highconf	66	6451	0.519	0.011	3.01e-01
+proximal_5kb	y_resid_gated (late>=5.7)	y_resid_gated	control_non_activated	strictly_zygotic_highconf	66	2966	0.552	0.028	7.23e-02
+proximal_5kb	late	late	control_silent	strictly_zygotic_highconf	83	14245	0.734	0.014	9.11e-14
+proximal_5kb	late	late	control_non_activated	strictly_zygotic_highconf	83	3820	0.481	0.02	7.19e-01
+bounded_25kb	y_abs	y_abs	control_silent	strictly_zygotic_highconf	83	14245	0.712	0.011	1.27e-11
+bounded_25kb	y_abs	y_abs	control_non_activated	strictly_zygotic_highconf	83	3820	0.573	0.026	1.09e-02
+bounded_25kb	y_resid_gated (late>=5.7)	y_resid_gated	control_silent	strictly_zygotic_highconf	68	6331	0.495	0.01	5.51e-01
+bounded_25kb	y_resid_gated (late>=5.7)	y_resid_gated	control_non_activated	strictly_zygotic_highconf	68	2846	0.594	0.032	4.02e-03
+bounded_25kb	late	late	control_silent	strictly_zygotic_highconf	83	14245	0.75	0.015	1.72e-15
+bounded_25kb	late	late	control_non_activated	strictly_zygotic_highconf	83	3820	0.528	0.022	1.88e-01

@@ -1097,7 +1097,10 @@ def check_resource_status(
 
     # Pre-MZT TF MEME Subset
     filtered_meme_dest = downloads_dir / "premzt_tfs.meme"
+    audit_tsv_dest = downloads_dir / "premzt_tf_jaspar_mapping.tsv"
     v_filt, _ = check_file_integrity(filtered_meme_dest, min_size_bytes=1024, fast=fast_check)
+    if v_filt and not audit_tsv_dest.exists():
+        v_filt = False
     records.append({
         "Resource": "Pre-MZT TF Motifs",
         "Path": str(filtered_meme_dest),
@@ -1368,7 +1371,8 @@ def download_all_resources(
     max_retries: Optional[int] = None,
     task_name: str = "download_resources",
     task_manager: Optional[Any] = None,
-    verify_full: bool = False
+    verify_full: bool = False,
+    force_rerun: bool = False
 ) -> pd.DataFrame:
     """
     Consolidated download manager:
@@ -1517,13 +1521,29 @@ def download_all_resources(
     # Pre-MZT TF MEME Subset filter
     jaspar_dest = Path(jaspar_meme_path).resolve() if jaspar_meme_path else downloads_dir / "JASPAR2024_CORE_vertebrates_non-redundant.meme"
     filtered_meme_dest = downloads_dir / "premzt_tfs.meme"
-    if not check_file_integrity(filtered_meme_dest, 1024)[0] and jaspar_dest.exists() and premzt_tf_list and Path(premzt_tf_list).exists():
+    audit_tsv_dest = downloads_dir / "premzt_tf_jaspar_mapping.tsv"
+
+    meme_needs_regen = (
+        force_rerun
+        or not check_file_integrity(filtered_meme_dest, 1024)[0]
+        or not audit_tsv_dest.exists()
+    )
+    if not meme_needs_regen and filtered_meme_dest.exists():
+        meme_mtime = filtered_meme_dest.stat().st_mtime
+        if premzt_tf_list and Path(premzt_tf_list).exists() and Path(premzt_tf_list).stat().st_mtime > meme_mtime:
+            meme_needs_regen = True
+        infer_script = Path(__file__).resolve().parent / "infer_and_attribute.py"
+        if infer_script.exists() and infer_script.stat().st_mtime > meme_mtime:
+            meme_needs_regen = True
+
+    if meme_needs_regen and jaspar_dest.exists() and premzt_tf_list and Path(premzt_tf_list).exists():
         from scripts.infer_and_attribute import filter_jaspar_meme
         print(f"[*] Filtering JASPAR database for pre-MZT TFs ({premzt_tf_list})...", flush=True)
         filter_jaspar_meme(
             jaspar_meme_path=str(jaspar_dest),
             tf_list_path=premzt_tf_list,
-            out_filtered_meme=str(filtered_meme_dest)
+            out_filtered_meme=str(filtered_meme_dest),
+            out_audit_tsv=str(audit_tsv_dest)
         )
 
     # Target <-> Zebrafish Ortholog Map
@@ -1716,6 +1736,7 @@ def main():
     parser.add_argument("--max-per-host-workers", type=int, default=2, help="Max parallel download workers per host (e.g. EBI)")
     parser.add_argument("--max-retries", type=int, default=0, help="Max download retries (0 or None = infinite)")
     parser.add_argument("--verify-full", action="store_true", help="Pass fast=False to check_file_integrity for full gzip -t verification across all existing archives")
+    parser.add_argument("--force-rerun", action="store_true", help="Force rerun of derived resources (e.g. pre-MZT TF MEME subset)")
     args = parser.parse_args()
 
     work_dir = Path(args.work_dir).resolve()
@@ -1774,7 +1795,8 @@ def main():
         atac_accessions_medaka=med_atac_cfg,
         slam_accessions=slam_cfg,
         use_pretrained_bias=use_pretrained_bias,
-        verify_full=args.verify_full
+        verify_full=args.verify_full,
+        force_rerun=args.force_rerun
     )
 
 

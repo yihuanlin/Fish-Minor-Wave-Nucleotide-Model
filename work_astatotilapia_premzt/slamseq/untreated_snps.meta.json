@@ -1,0 +1,11 @@
+{
+  "bam_path": "/home/home/NucleotideModel/work_astatotilapia_premzt/slamseq/bams/control_untreated_pooled.sorted.bam",
+  "bam_size": 1173391343,
+  "bam_mtime": 1795269597.0021434,
+  "min_depth": 5,
+  "min_vaf": 0.25,
+  "total_t_bases": 492592473,
+  "total_tc_mutations": 447982,
+  "bg_tc_rate": 0.0009094373636521238,
+  "num_snps": 322049
+}

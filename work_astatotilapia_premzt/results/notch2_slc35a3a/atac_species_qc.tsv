@@ -1,0 +1,3 @@
+species	early_merged_reads	late_merged_reads	late_frip	total_peaks	primary_peaks_kept	median_peak_width_bp	repeat_downweight_summits	mito_read_pct	early_tss_enrichment	late_tss_enrichment	n_train_chroms	n_valid_chroms	n_test_chroms	test_chroms	rep_depth_balance_ratio
+Danio_rerio	47979920	105158908	0.2704	146778	144049	414.0	28	0.0	3.16	6.85	16	3	6	8, 17, 18, 11, 7 (+1 more)	3.57
+Oryzias_latipes	39254273	72428774	0.035	12141	12138	227.0	0	0.0	1.35	2.23	15	3	6	4, 23, 20, 2, 24 (+1 more)	1.61

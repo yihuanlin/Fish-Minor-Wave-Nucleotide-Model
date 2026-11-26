@@ -1,0 +1,42 @@
+Resource	Path	Size_MB	Status
+Astatotilapia_calliptera Genome FASTA	/home/home/NucleotideModel/work_astatotilapia_premzt/downloads/Astatotilapia_calliptera.fAstCal1.3.dna_sm.toplevel.fa	895.1	VERIFIED
+Astatotilapia_calliptera GTF	/home/home/NucleotideModel/work_astatotilapia_premzt/downloads/Astatotilapia_calliptera.fAstCal1.3.112.gtf.gz	31.0	VERIFIED
+Zebrafish Genome FASTA	/home/home/NucleotideModel/work_astatotilapia_premzt/downloads/Danio_rerio.GRCz11.dna_sm.primary_assembly.fa	1396.4	VERIFIED
+Zebrafish GTF	/home/home/NucleotideModel/work_astatotilapia_premzt/downloads/Danio_rerio.GRCz11.112.gtf.gz	18.1	VERIFIED
+Medaka Genome FASTA	/home/home/NucleotideModel/work_astatotilapia_premzt/downloads/Oryzias_latipes.ASM223467v1.dna_sm.toplevel.fa	746.3	VERIFIED
+Medaka GTF	/home/home/NucleotideModel/work_astatotilapia_premzt/downloads/Oryzias_latipes.ASM223467v1.112.gtf.gz	13.4	VERIFIED
+JASPAR 2024 CORE Database	/home/home/NucleotideModel/work_astatotilapia_premzt/downloads/JASPAR2024_CORE_vertebrates_non-redundant.meme	0.47	VERIFIED
+Pre-MZT TF Motifs	/home/home/NucleotideModel/work_astatotilapia_premzt/downloads/premzt_tfs.meme	0.02	VERIFIED
+Target <-> Zebrafish Ortholog Map	/home/home/NucleotideModel/work_astatotilapia_premzt/downloads/orthologs_target_to_zf.tsv	1.23	VERIFIED
+Zebrafish ATAC FASTQ (SRR9032650)	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Danio_rerio/fastqs/SRR9032650_1.fastq.gz	1588.7	VERIFIED
+Zebrafish ATAC FASTQ (SRR9032650)	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Danio_rerio/fastqs/SRR9032650_2.fastq.gz	1772.9	VERIFIED
+Zebrafish ATAC FASTQ (SRR9032651)	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Danio_rerio/fastqs/SRR9032651_1.fastq.gz	5105.7	VERIFIED
+Zebrafish ATAC FASTQ (SRR9032651)	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Danio_rerio/fastqs/SRR9032651_2.fastq.gz	5292.4	VERIFIED
+Zebrafish ATAC FASTQ (SRR9032658)	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Danio_rerio/fastqs/SRR9032658_1.fastq.gz	1485.2	VERIFIED
+Zebrafish ATAC FASTQ (SRR9032658)	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Danio_rerio/fastqs/SRR9032658_2.fastq.gz	1546.0	VERIFIED
+Zebrafish ATAC FASTQ (SRR9032659)	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Danio_rerio/fastqs/SRR9032659_1.fastq.gz	3498.2	VERIFIED
+Zebrafish ATAC FASTQ (SRR9032659)	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Danio_rerio/fastqs/SRR9032659_2.fastq.gz	3532.2	VERIFIED
+Zebrafish ATAC FASTQ (SRR9032660)	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Danio_rerio/fastqs/SRR9032660_1.fastq.gz	943.5	VERIFIED
+Zebrafish ATAC FASTQ (SRR9032660)	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Danio_rerio/fastqs/SRR9032660_2.fastq.gz	989.0	VERIFIED
+Zebrafish ATAC FASTQ (SRR9032661)	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Danio_rerio/fastqs/SRR9032661_1.fastq.gz	1276.0	VERIFIED
+Zebrafish ATAC FASTQ (SRR9032661)	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Danio_rerio/fastqs/SRR9032661_2.fastq.gz	1465.3	VERIFIED
+Zebrafish ATAC FASTQ (SRR9032640)	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Danio_rerio/fastqs/SRR9032640_1.fastq.gz	1958.6	VERIFIED
+Zebrafish ATAC FASTQ (SRR9032640)	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Danio_rerio/fastqs/SRR9032640_2.fastq.gz	1894.4	VERIFIED
+Medaka ATAC FASTQ (DRR152711)	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Oryzias_latipes/fastqs/DRR152711.fastq.gz	1159.9	VERIFIED
+Medaka ATAC FASTQ (DRR152712)	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Oryzias_latipes/fastqs/DRR152712.fastq.gz	1450.3	VERIFIED
+Medaka ATAC FASTQ (DRR152713)	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Oryzias_latipes/fastqs/DRR152713.fastq.gz	1532.8	VERIFIED
+Medaka ATAC FASTQ (DRR152718)	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Oryzias_latipes/fastqs/DRR152718.fastq.gz	2410.3	VERIFIED
+Medaka ATAC FASTQ (DRR152719)	/home/home/NucleotideModel/work_astatotilapia_premzt/atac/Oryzias_latipes/fastqs/DRR152719.fastq.gz	3780.3	VERIFIED
+SLAM-seq FASTQ (SRR16195447)	/home/home/NucleotideModel/work_astatotilapia_premzt/slamseq/fastqs/SRR16195447.fastq.gz	246.2	VERIFIED
+SLAM-seq FASTQ (SRR16195448)	/home/home/NucleotideModel/work_astatotilapia_premzt/slamseq/fastqs/SRR16195448.fastq.gz	1479.0	VERIFIED
+SLAM-seq FASTQ (SRR16195451)	/home/home/NucleotideModel/work_astatotilapia_premzt/slamseq/fastqs/SRR16195451.fastq.gz	1026.2	VERIFIED
+SLAM-seq FASTQ (SRR16195452)	/home/home/NucleotideModel/work_astatotilapia_premzt/slamseq/fastqs/SRR16195452.fastq.gz	625.1	VERIFIED
+SLAM-seq FASTQ (SRR16195453)	/home/home/NucleotideModel/work_astatotilapia_premzt/slamseq/fastqs/SRR16195453.fastq.gz	844.9	VERIFIED
+SLAM-seq FASTQ (SRR16195454)	/home/home/NucleotideModel/work_astatotilapia_premzt/slamseq/fastqs/SRR16195454.fastq.gz	293.4	VERIFIED
+SLAM-seq FASTQ (SRR16195455)	/home/home/NucleotideModel/work_astatotilapia_premzt/slamseq/fastqs/SRR16195455.fastq.gz	853.5	VERIFIED
+SLAM-seq FASTQ (SRR16195456)	/home/home/NucleotideModel/work_astatotilapia_premzt/slamseq/fastqs/SRR16195456.fastq.gz	441.7	VERIFIED
+SLAM-seq FASTQ (SRR16195459)	/home/home/NucleotideModel/work_astatotilapia_premzt/slamseq/fastqs/SRR16195459.fastq.gz	540.0	VERIFIED
+SLAM-seq FASTQ (SRR16195460)	/home/home/NucleotideModel/work_astatotilapia_premzt/slamseq/fastqs/SRR16195460.fastq.gz	368.7	VERIFIED
+SLAM-seq FASTQ (SRR16195483)	/home/home/NucleotideModel/work_astatotilapia_premzt/slamseq/fastqs/SRR16195483.fastq.gz	570.4	VERIFIED
+SLAM-seq FASTQ (SRR16195484)	/home/home/NucleotideModel/work_astatotilapia_premzt/slamseq/fastqs/SRR16195484.fastq.gz	748.9	VERIFIED
+SLAM-seq FASTQ (SRR16195485)	/home/home/NucleotideModel/work_astatotilapia_premzt/slamseq/fastqs/SRR16195485.fastq.gz	851.2	VERIFIED

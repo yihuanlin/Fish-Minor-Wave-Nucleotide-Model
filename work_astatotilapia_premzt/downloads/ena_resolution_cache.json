@@ -1,0 +1,257 @@
+{
+  "SRR9032640": [
+    {
+      "run_accession": "SRR9032640",
+      "library_layout": "PAIRED",
+      "is_paired": true,
+      "urls": [
+        "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR903/000/SRR9032640/SRR9032640_1.fastq.gz",
+        "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR903/000/SRR9032640/SRR9032640_2.fastq.gz"
+      ]
+    }
+  ],
+  "DRX143405": [
+    {
+      "run_accession": "DRR152711",
+      "library_layout": "SINGLE",
+      "is_paired": false,
+      "urls": [
+        "https://ftp.sra.ebi.ac.uk/vol1/fastq/DRR152/DRR152711/DRR152711.fastq.gz"
+      ]
+    }
+  ],
+  "DRX143406": [
+    {
+      "run_accession": "DRR152712",
+      "library_layout": "SINGLE",
+      "is_paired": false,
+      "urls": [
+        "https://ftp.sra.ebi.ac.uk/vol1/fastq/DRR152/DRR152712/DRR152712.fastq.gz"
+      ]
+    }
+  ],
+  "DRX143407": [
+    {
+      "run_accession": "DRR152713",
+      "library_layout": "SINGLE",
+      "is_paired": false,
+      "urls": [
+        "https://ftp.sra.ebi.ac.uk/vol1/fastq/DRR152/DRR152713/DRR152713.fastq.gz"
+      ]
+    }
+  ],
+  "DRX143412": [
+    {
+      "run_accession": "DRR152718",
+      "library_layout": "SINGLE",
+      "is_paired": false,
+      "urls": [
+        "https://ftp.sra.ebi.ac.uk/vol1/fastq/DRR152/DRR152718/DRR152718.fastq.gz"
+      ]
+    }
+  ],
+  "DRX143413": [
+    {
+      "run_accession": "DRR152719",
+      "library_layout": "SINGLE",
+      "is_paired": false,
+      "urls": [
+        "https://ftp.sra.ebi.ac.uk/vol1/fastq/DRR152/DRR152719/DRR152719.fastq.gz"
+      ]
+    }
+  ],
+  "GSM3756599": [
+    {
+      "run_accession": "SRR9032650",
+      "library_layout": "PAIRED",
+      "is_paired": true,
+      "urls": [
+        "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR903/000/SRR9032650/SRR9032650_1.fastq.gz",
+        "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR903/000/SRR9032650/SRR9032650_2.fastq.gz"
+      ]
+    }
+  ],
+  "GSM3756600": [
+    {
+      "run_accession": "SRR9032651",
+      "library_layout": "PAIRED",
+      "is_paired": true,
+      "urls": [
+        "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR903/001/SRR9032651/SRR9032651_1.fastq.gz",
+        "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR903/001/SRR9032651/SRR9032651_2.fastq.gz"
+      ]
+    }
+  ],
+  "GSM3756603": [
+    {
+      "run_accession": "SRR9032658",
+      "library_layout": "PAIRED",
+      "is_paired": true,
+      "urls": [
+        "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR903/008/SRR9032658/SRR9032658_1.fastq.gz",
+        "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR903/008/SRR9032658/SRR9032658_2.fastq.gz"
+      ]
+    }
+  ],
+  "GSM3756604": [
+    {
+      "run_accession": "SRR9032659",
+      "library_layout": "PAIRED",
+      "is_paired": true,
+      "urls": [
+        "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR903/009/SRR9032659/SRR9032659_1.fastq.gz",
+        "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR903/009/SRR9032659/SRR9032659_2.fastq.gz"
+      ]
+    }
+  ],
+  "GSM3756605": [
+    {
+      "run_accession": "SRR9032660",
+      "library_layout": "PAIRED",
+      "is_paired": true,
+      "urls": [
+        "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR903/000/SRR9032660/SRR9032660_1.fastq.gz",
+        "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR903/000/SRR9032660/SRR9032660_2.fastq.gz"
+      ]
+    },
+    {
+      "run_accession": "SRR9032661",
+      "library_layout": "PAIRED",
+      "is_paired": true,
+      "urls": [
+        "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR903/001/SRR9032661/SRR9032661_1.fastq.gz",
+        "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR903/001/SRR9032661/SRR9032661_2.fastq.gz"
+      ]
+    }
+  ],
+  "GSM5610039": [
+    {
+      "run_accession": "SRR16195447",
+      "library_layout": "SINGLE",
+      "is_paired": false,
+      "urls": [
+        "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR161/047/SRR16195447/SRR16195447.fastq.gz"
+      ]
+    }
+  ],
+  "GSM5610040": [
+    {
+      "run_accession": "SRR16195448",
+      "library_layout": "SINGLE",
+      "is_paired": false,
+      "urls": [
+        "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR161/048/SRR16195448/SRR16195448.fastq.gz"
+      ]
+    }
+  ],
+  "GSM5610043": [
+    {
+      "run_accession": "SRR16195451",
+      "library_layout": "SINGLE",
+      "is_paired": false,
+      "urls": [
+        "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR161/051/SRR16195451/SRR16195451.fastq.gz"
+      ]
+    }
+  ],
+  "GSM5610044": [
+    {
+      "run_accession": "SRR16195452",
+      "library_layout": "SINGLE",
+      "is_paired": false,
+      "urls": [
+        "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR161/052/SRR16195452/SRR16195452.fastq.gz"
+      ]
+    }
+  ],
+  "GSM5610045": [
+    {
+      "run_accession": "SRR16195453",
+      "library_layout": "SINGLE",
+      "is_paired": false,
+      "urls": [
+        "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR161/053/SRR16195453/SRR16195453.fastq.gz"
+      ]
+    }
+  ],
+  "GSM5610046": [
+    {
+      "run_accession": "SRR16195454",
+      "library_layout": "SINGLE",
+      "is_paired": false,
+      "urls": [
+        "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR161/054/SRR16195454/SRR16195454.fastq.gz"
+      ]
+    }
+  ],
+  "GSM5610047": [
+    {
+      "run_accession": "SRR16195455",
+      "library_layout": "SINGLE",
+      "is_paired": false,
+      "urls": [
+        "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR161/055/SRR16195455/SRR16195455.fastq.gz"
+      ]
+    }
+  ],
+  "GSM5610048": [
+    {
+      "run_accession": "SRR16195456",
+      "library_layout": "SINGLE",
+      "is_paired": false,
+      "urls": [
+        "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR161/056/SRR16195456/SRR16195456.fastq.gz"
+      ]
+    }
+  ],
+  "GSM5610051": [
+    {
+      "run_accession": "SRR16195459",
+      "library_layout": "SINGLE",
+      "is_paired": false,
+      "urls": [
+        "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR161/059/SRR16195459/SRR16195459.fastq.gz"
+      ]
+    }
+  ],
+  "GSM5610052": [
+    {
+      "run_accession": "SRR16195460",
+      "library_layout": "SINGLE",
+      "is_paired": false,
+      "urls": [
+        "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR161/060/SRR16195460/SRR16195460.fastq.gz"
+      ]
+    }
+  ],
+  "GSM5610075": [
+    {
+      "run_accession": "SRR16195483",
+      "library_layout": "SINGLE",
+      "is_paired": false,
+      "urls": [
+        "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR161/083/SRR16195483/SRR16195483.fastq.gz"
+      ]
+    }
+  ],
+  "GSM5610076": [
+    {
+      "run_accession": "SRR16195484",
+      "library_layout": "SINGLE",
+      "is_paired": false,
+      "urls": [
+        "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR161/084/SRR16195484/SRR16195484.fastq.gz"
+      ]
+    }
+  ],
+  "GSM5610077": [
+    {
+      "run_accession": "SRR16195485",
+      "library_layout": "SINGLE",
+      "is_paired": false,
+      "urls": [
+        "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR161/085/SRR16195485/SRR16195485.fastq.gz"
+      ]
+    }
+  ]
+}

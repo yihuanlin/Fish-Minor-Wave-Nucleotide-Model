@@ -1,0 +1,9 @@
+counts_loss_weight	19.1
+filters	512
+n_dil_layers	8
+bias_model_path	/home/home/NucleotideModel/work_astatotilapia_premzt/models/chrombpnet/Danio_rerio/fold_0/chrombpnet_run/models/bias_model_scaled.pt
+inputlen	2114
+outputlen	1000
+max_jitter	500
+chr_fold_path	/home/home/NucleotideModel/work_astatotilapia_premzt/models/chrombpnet/Danio_rerio/fold_0/prep/chr_fold_fold_0.json
+negative_sampling_ratio	0.1

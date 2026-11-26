@@ -1,0 +1,25 @@
+{
+  "model_id": "InstaDeepAI/NTv3_tracks",
+  "compute_profile": "laptop_16gb",
+  "context_len": 65536,
+  "crop_ratio": 0.375,
+  "tracks": [
+    "atac_256cell",
+    "atac_dome",
+    "slam_0.75hpf_fwd",
+    "slam_0.75hpf_rev",
+    "slam_2.5hpf_fwd",
+    "slam_2.5hpf_rev",
+    "slam_3.0_3.5hpf_fwd",
+    "slam_3.0_3.5hpf_rev",
+    "slam_4.5hpf_fwd",
+    "slam_4.5hpf_rev"
+  ],
+  "train_mode": "lora",
+  "species_id": 8,
+  "batch_size": 1,
+  "grad_accum": 16,
+  "epochs": 3,
+  "best_val_loss": 0.09417463234315315,
+  "device": "cuda"
+}

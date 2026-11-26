@@ -1,0 +1,36 @@
+{
+    "counts_metrics": {
+        "peaks_and_nonpeaks": {
+            "spearmanr": -0.11158307420653475,
+            "pearsonr": 0.0016258572633974706,
+            "mse": 5.420050786932986
+        },
+        "nonpeaks": {
+            "spearmanr": -0.17715875797809943,
+            "pearsonr": 0.06625750982880355,
+            "mse": 2.872886714576032
+        },
+        "peaks": {
+            "spearmanr": -0.2328578716363048,
+            "pearsonr": -0.18344154842326282,
+            "mse": 7.967214859289941
+        }
+    },
+    "profile_metrics": {
+        "peaks_and_nonpeaks": {
+            "median_jsd": 0.7493555088555361,
+            "median_norm_jsd": 0.15211484664939492,
+            "median_pearsonr": 0.42457397586286905
+        },
+        "nonpeaks": {
+            "median_jsd": 0.7922412032994242,
+            "median_norm_jsd": 0.12716943284208893,
+            "median_pearsonr": 0.37708917254391877
+        },
+        "peaks": {
+            "median_jsd": 0.6865268805401861,
+            "median_norm_jsd": 0.18617098252028855,
+            "median_pearsonr": 0.47159243276409557
+        }
+    }
+}

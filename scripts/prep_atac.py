@@ -34,6 +34,11 @@ from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional, Set
 from collections import defaultdict
 
+# Ensure repo root is on sys.path
+repo_root = Path(__file__).resolve().parent.parent
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
+
 # Ensure conda env bin directory is at the front of PATH
 bin_dir = str(Path(sys.prefix) / "bin")
 if bin_dir not in os.environ.get("PATH", ""):
